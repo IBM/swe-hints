@@ -1,49 +1,21 @@
-<!-- This should be the location of the title of the repository, normally the short name -->
-# repo-template
+# Hints
 
-<!-- Build Status, is a great thing to have at the top of your repository, it shows that you take your CI/CD as first class citizens -->
-<!-- [![Build Status](https://travis-ci.org/jjasghar/ibm-cloud-cli.svg?branch=master)](https://travis-ci.org/jjasghar/ibm-cloud-cli) -->
+This repo about analyze, generate and unify hints in current repo level coding problems.
 
-<!-- Not always needed, but a scope helps the user understand in a short sentance like below, why this repo exists -->
-## Scope
+folders - purpose:
+* `analyze_hint`: helper scripts of analyze hints, also a garbage collection of helper scripts
+* `helper_code`: helper code on the leave one out experiments, including data prepare and analysis
+* `identity_projection`: identity projection experiments given selection, currently empty, maybe merged into `src`
+* `identity_selection`: identity selection experiments given projection, currently has defuse2.py, feabench, nocode, and swebenchpro.
+* `leave_one_out`: leave one out experiments, contains README inside.
+* `printing`: instances printing scripts, contains README
+* `repos`: location to store github repos for hint generation, contains scripts.
+* `src`: extract identifier hints. contains outdated README, but suffice to see the functions 
+* `mini-swe-agent`: changes to run mini swe agent
+* `taxonomy_graph`: the tools to draw the taxonomy graph.
+`requirements.txt` is meant for everything except `mini-swe-agent` and `taxonomy_graph`. `mini-swe-agent` uses the environment from the official `mini-swe-agent` github repo. `taxonomy_graph` folder is self-contained.
 
-The purpose of this project is to provide a template for new open source repositories.
-
-<!-- A more detailed Usage or detailed explaination of the repository here -->
-## Usage
-
-This repository contains some example best practices for open source repositories:
-
-* [LICENSE](LICENSE)
-* [README.md](README.md)
-* [CONTRIBUTING.md](CONTRIBUTING.md)
-* [MAINTAINERS.md](MAINTAINERS.md)
-* [CODE_OF_CONDUCT.md](CODE_OF_CONDUCT.md)
-<!-- A Changelog allows you to track major changes and things that happen, https://github.com/github-changelog-generator/github-changelog-generator can help automate the process -->
-* [CHANGELOG.md](CHANGELOG.md)
-
-> These are optional
-
-<!-- The following are OPTIONAL, but strongly suggested to have in your repository. -->
-* [dco.yml](.github/dco.yml) - This enables DCO bot for you, please take a look https://github.com/probot/dco for more details.
-* [travis.yml](.travis.yml) - This is a example `.travis.yml`, please take a look https://docs.travis-ci.com/user/tutorial/ for more details.
-
-These may be copied into a new or existing project to make it easier for developers not on a project team to collaborate.
-
-<!-- A notes section is useful for anything that isn't covered in the Usage or Scope. Like what we have below. -->
-## Notes
-
-**NOTE: While this boilerplate project uses the Apache 2.0 license, when
-establishing a new repo using this template, please use the
-license that was approved for your project.**
-
-**NOTE: This repository has been configured with the [DCO bot](https://github.com/probot/dco).
-When you set up a new repository that uses the Apache license, you should
-use the DCO to manage contributions. The DCO bot will help enforce that.
-Please contact one of the IBM GH Org stewards.**
-
-<!-- Questions can be useful but optional, this gives you a place to say, "This is how to contact this project maintainers or create PRs -->
-If you have any questions or issues you can create a new [issue here][issues].
+## Contributing
 
 Pull requests are very welcome! Make sure your patches are well tested.
 Ideally create a topic branch for every separate change you make. For
@@ -64,15 +36,7 @@ If you would like to see the detailed LICENSE click [here](LICENSE).
 
 ```text
 #
-# Copyright IBM Corp. {Year project was created} - {Current Year}
-# SPDX-License-Identifier: Apache-2.0
+# Copyright IBM Corp. 2026
+# SPDX-License-Identifier: MIT
 #
 ```
-## Authors
-
-Optionally, you may include a list of authors, though this is redundant with the built-in
-GitHub list of contributors.
-
-- Author: New OpenSource IBMer <new-opensource-ibmer@ibm.com>
-
-[issues]: https://github.com/IBM/repo-template/issues/new
