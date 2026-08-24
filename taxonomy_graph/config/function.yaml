@@ -1,0 +1,62 @@
+# Function Configuration
+# Define categories and their relationships
+
+categories:
+  Func: "Function"
+  Name: "Function Name"
+  Sign: "Signature"
+  InS: "Input Spec"
+  # OutS: "Output Spec"
+  InT: "Input type"
+  OutPT: "Output Partial type"
+  InN: "Input name"
+  OutCT: "Output Complete type"
+  # OutST: "Output Super Type"
+  LocVar: "Local variables"
+  # LocFunc: "Function Location"
+  LocPar: "Partial Location"
+  LocComp: "Complete Location"
+  # Desc: "Description"
+  WeakS: "Weak Semantics Description"
+  StrongS: "Strong Semantics Description"
+  # Except: "Exception"
+  ExceptValue: "Exception Value"
+  ExceptType: "Exception Type"
+  ParamDefault: "Parameter Default Value"
+
+
+
+# Relations: A -> B means A ⪯ B, i.e. B is more revealing/specific than A
+relations:
+  # Function as root (depth = 0)
+  - ["Func", "Name"]
+  - ["Func", "Sign"]
+  # - ["Func", "LocFunc"]
+  - ["Func", "LocPar"]
+  # - ["Func", "Desc"]
+  - ["Func", "WeakS"]
+  - ["Func", "ExceptType"]
+  - ["Func", "LocVar"]
+  - ["Func", "ParamDefault"]
+
+  # Function Signature as parent (depth = 1)
+  - ["Sign", "InS"]
+  - ["Sign", "OutPT"]
+  - ["InS", "InT"]
+  # - ["Sign", "OutST"]
+  - ["OutPT", "OutCT"]
+  - ["InS", "InN"]
+
+  # Function Location as parent (depth = 1)
+  # - ["LocFunc", "LocPar"]
+  - ["LocPar", "LocComp"]
+  
+  # Description as parent (depth = 1)
+  # - ["Desc", "WeakS"]
+  - ["WeakS", "StrongS"]
+
+  # Exception as parent (depth = 1)
+  # - ["Except", "ExceptExact"]
+  - ["ExceptType", "ExceptValue"]
+
+# Made with Bob

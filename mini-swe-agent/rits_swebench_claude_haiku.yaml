@@ -1,0 +1,13 @@
+model:
+  model_name: "openai/aws/claude-haiku-4-5"
+  #model_class: "litellm_textbased"
+  cost_tracking: "default"
+  litellm_model_registry: "model_registry_cost/litellm_model_registry.json"
+  #action_regex: "```bash\\s*\\n(.*?)\\n```"
+  model_kwargs:
+    api_base: "YOUR_API_BASE"
+    api_key: "YOUR_API_KEY"
+    drop_params: true
+    temperature: 1.0
+
+# Made with Bob

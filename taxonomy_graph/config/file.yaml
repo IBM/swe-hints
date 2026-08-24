@@ -1,0 +1,31 @@
+# File Configuration
+# Define categories and their relationships
+
+categories:
+  File: "File"
+  Class: "Class"
+  Func: "Function"
+  FileLoc: "File Location (FileName)"
+  Import: "Import Statement"
+  NewFile: "New File"
+  ModifiedFile: "Modified File"
+
+
+
+
+# Relations: A -> B means A ⪯ B, i.e. B is more revealing/specific than A
+relations:
+  # Class as root (depth = 0)
+  - ["File", "FileLoc"]
+  - ["File", "Import"]
+  - ["File", "Class"]
+
+  # Class as parent (depth = 1)
+  - ["Class", "Func"]
+
+
+  # File location as parent (depth = 1)
+  - ["FileLoc", "NewFile"]
+  - ["FileLoc", "ModifiedFile"]
+  
+# Made with Bob

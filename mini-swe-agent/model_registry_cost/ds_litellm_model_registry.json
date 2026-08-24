@@ -1,0 +1,8 @@
+{
+  "openai/azure/DeepSeek-V4-Flash": {
+    "input_cost_per_token": 0.00000019,
+    "output_cost_per_token": 0.00000051,
+    "litellm_provider": "openai",
+    "mode": "chat"
+  }
+}

@@ -1,0 +1,16 @@
+datasets
+pydantic
+rich
+tree-sitter-languages
+unidiff
+
+# FEA-Bench data pipeline (helper_code/fea_bench_data/)
+# ghapi 2.x made all calls async; FEA-Bench code requires the synchronous 1.x API
+beautifulsoup4
+chardet
+fastcore<2
+ghapi==1.1.1
+gitpython
+python-dotenv
+requests
+tiktoken

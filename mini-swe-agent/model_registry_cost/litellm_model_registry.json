@@ -1,0 +1,8 @@
+{
+  "openai/aws/claude-haiku-4-5": {
+    "input_cost_per_token": 0.00000076,
+    "output_cost_per_token": 0.0000038,
+    "litellm_provider": "openai",
+    "mode": "chat"
+  }
+}

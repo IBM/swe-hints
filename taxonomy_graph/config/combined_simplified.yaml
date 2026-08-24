@@ -1,0 +1,20 @@
+# Combined Taxonomy Configuration - Simplified
+# Keeps only top-level node types under a single root: Identifier Hints
+
+categories:
+  IdentifierHints: "Identifier Hints"
+  File: "File"
+  Class: "Class"
+  Func: "Function"
+  ClsFunc: "Class Function"
+  ClsVar: "Class Variable"
+  Var: "Variable"
+
+# Relations: A -> B means A ⪯ B, i.e. B is more revealing/specific than A
+relations:
+  - ["IdentifierHints", "File"]
+  - ["IdentifierHints", "Class"]
+  - ["IdentifierHints", "Func"]
+  - ["IdentifierHints", "Var"]
+  - ["Class", "ClsFunc"]
+  - ["Class", "ClsVar"]
