@@ -2,6 +2,8 @@
 
 This repo about analyze, generate and unify hints in current repo level coding problems.
 
+To run DefUse hint selection on any Python benchmark, see [README_defuse.md](README_defuse.md).
+
 folders - purpose:
 * `analyze_hint`: helper scripts of analyze hints, also a garbage collection of helper scripts
 * `helper_code`: helper code on the leave one out experiments, including data prepare and analysis

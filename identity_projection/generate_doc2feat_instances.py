@@ -91,6 +91,23 @@ def _strip_augmentation(ps: str) -> str:
 # Hints renderers
 # ---------------------------------------------------------------------------
 
+def _render_nameonly(identifiers: list[dict]) -> str:
+    """Bare names only, de-duplicated (mirrors generate_instances.py)."""
+    if not identifiers:
+        return ""
+    header = (
+        "If completing this task requires creating new files, classes, fields, "
+        "or error messages, you may consider using the following suggested entity names:"
+    )
+    lines, seen = [header, ""], set()
+    for ident in identifiers:
+        name = ident.get("name", "")
+        if name and name not in seen:
+            seen.add(name)
+            lines.append(f"- `{name}`")
+    return "\n".join(lines)
+
+
 def _render_nocode(identifiers: list[dict]) -> str:
     if not identifiers:
         return ""
@@ -174,7 +191,35 @@ def _render_swe_pro(identifiers: list[dict]) -> str:
     return "\n\n".join(blocks)
 
 
+def _render_declaration(identifiers: list[dict]) -> str:
+    """Structural declaration per identifier: name, type, path, new-file flag, signature.
+    Same layout as fea_brief but without the semantic description."""
+    if not identifiers:
+        return ""
+    blocks = []
+    for ident in identifiers:
+        et, name = ident.get("entity_type", ""), ident.get("name", "")
+        path, sig = ident.get("path", ""), ident.get("signature", "")
+        header = f"### `{name}`"
+        if et:
+            header += f" ({et})"
+        if path:
+            header += f" — `{path}`" + (" [new file]" if ident.get("is_new_file") else "")
+        lines = [header]
+        if sig:
+            lines.append(f"Signature: `{sig}`")
+        for m in ident.get("cls_methods") or []:
+            ml = f"- `{m.get('name','')}`"
+            if m.get("signature"):
+                ml += f": `{m['signature']}`"
+            lines.append(ml)
+        blocks.append("\n".join(lines))
+    return "\n\n".join(blocks)
+
+
 RENDERERS = {
+    "nameonly":  _render_nameonly,
+    "declaration": _render_declaration,
     "nocode":    _render_nocode,
     "fea_brief": _render_fea_brief,
     "swe_pro":   _render_swe_pro,

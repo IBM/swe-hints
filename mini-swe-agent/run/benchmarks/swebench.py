@@ -4,6 +4,7 @@
 # Read this first: https://mini-swe-agent.com/latest/usage/swebench/  (usage docs)
 
 import concurrent.futures
+import copy
 import json
 import random
 import re
@@ -91,7 +92,10 @@ def get_swebench_pro_docker_image_name(instance: dict) -> str:
 
 
 def get_sb_environment(config: dict, instance: dict) -> Environment:
-    env_config = config.setdefault("environment", {})
+    # deepcopy, not setdefault: `config` is shared by every worker thread, so writing
+    # env_config["image"] into it would let one instance start in another's image once
+    # --workers > 1. doc2feat.py already copies; this runner did not.
+    env_config = copy.deepcopy(config.get("environment", {}))
     env_config["environment_class"] = env_config.get("environment_class", "docker")
     get_image_name = (
         get_swebench_pro_docker_image_name
@@ -107,7 +111,9 @@ def get_sb_environment(config: dict, instance: dict) -> Environment:
     env = get_environment(env_config)
     if startup_command := config.get("run", {}).get("env_startup_command"):
         startup_command = Template(startup_command, undefined=StrictUndefined).render(**instance)
-        out = env.execute(startup_command)
+        # Environment.execute takes a dict (it calls action.get("command")); a bare string
+        # raises AttributeError.
+        out = env.execute({"command": startup_command})
         if out["returncode"] != 0:
             raise RuntimeError(f"Error executing startup command: {out}")
     return env

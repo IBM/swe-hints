@@ -99,6 +99,110 @@ def _render_nocode(identifiers: list[dict]) -> str:
     return "\n".join(lines)
 
 
+def _render_nameonly(identifiers: list[dict]) -> str:
+    """Bare names only, de-duplicated. Same header as nocode so the arms differ
+    only in what is revealed per identifier, not in framing."""
+    if not identifiers:
+        return ""
+    header = (
+        "If completing this task requires creating new files, classes, fields, "
+        "or error messages, you may consider using the following suggested entity names:"
+    )
+    lines, seen = [header, ""], set()
+    for ident in identifiers:
+        name = ident.get("name", "")
+        if name and name not in seen:
+            seen.add(name)
+            lines.append(f"- `{name}`")
+    return "\n".join(lines)
+
+
+def _render_ours(identifiers: list[dict]) -> str:
+    """The DECLARATION projection: name, entity_type, path [new file], signature.
+
+    Base/Type parameters/Location lines below are gated on presence and never fire
+    for `declaration` — they are retained so the retired ours_v2/ours_v3 variants
+    render correctly if they are ever uncommented.
+
+    Same block shape as fea_brief minus the `> weak_semantics` line, so the two
+    differ by exactly one variable when compared.
+    """
+    if not identifiers:
+        return ""
+    blocks: list[str] = []
+    for ident in identifiers:
+        et     = ident.get("entity_type", "")
+        name   = ident.get("name", "")
+        path   = ident.get("path", "")
+        sig    = ident.get("signature", "")
+        is_new = ident.get("is_new_file")
+
+        header = f"### `{name}`"
+        kind = ident.get("entity_kind") or et      # Java: interface/enum/record; Python: None
+        if kind:
+            header += f" ({kind})"
+        if path:
+            new_tag = " [new file]" if is_new else ""
+            header += f" — `{path}`{new_tag}"
+        lines = [header]
+
+        if sig:
+            lines.append(f"Signature: `{sig}`")
+        # ours_v2 only — absent from the projected record under ours_v1, so the
+        # two projections share this renderer and differ purely by field set.
+        if ident.get("superclass"):
+            lines.append(f"Base: `{ident['superclass']}`")
+        if ident.get("generics"):
+            lines.append(f"Type parameters: `{ident['generics']}`")
+        # ours_v3 only.  complete_location subsumes partial_location, so show one line.
+        loc = ident.get("complete_location") or ident.get("partial_location")
+        if loc:
+            lines.append(f"Location: `{loc}`")
+
+        for m in ident.get("cls_methods") or []:
+            mname = m.get("name", "")
+            msig  = m.get("signature", "")
+            ml = f"- `{mname}`"
+            if msig:
+                ml += f": `{msig}`"
+            lines.append(ml)
+
+        blocks.append("\n".join(lines))
+
+    return "\n\n".join(blocks)
+
+
+def _render_semantics_only(identifiers: list[dict]) -> str:
+    """Per-identifier block: name plus weak + strong semantics.
+
+    Deliberately carries no entity_type, path, signature, or location - the bare
+    name is the only structural fact exposed.
+    """
+    if not identifiers:
+        return ""
+    blocks: list[str] = []
+    for ident in identifiers:
+        name   = ident.get("name", "")
+        weak   = ident.get("weak_semantics", "")
+        strong = ident.get("strong_semantics", "")
+
+        lines = [f"### `{name}`"]
+        if weak:
+            lines.append(f"> {weak}")
+        if strong:
+            lines.append(strong)
+
+        for m in ident.get("cls_methods") or []:
+            ml = f"- `{m.get('name','')}`"
+            if m.get("weak_semantics"):
+                ml += f": {m['weak_semantics']}"
+            lines.append(ml)
+
+        blocks.append("\n".join(lines))
+
+    return "\n\n".join(blocks)
+
+
 def _render_fea_brief(identifiers: list[dict]) -> str:
     """Per-identifier block: name, path, signature, weak_semantics, cls_methods."""
     if not identifiers:
@@ -114,8 +218,9 @@ def _render_fea_brief(identifiers: list[dict]) -> str:
 
         # Header line
         header = f"### `{name}`"
-        if et:
-            header += f" ({et})"
+        kind = ident.get("entity_kind") or et      # Java: interface/enum/record; Python: None
+        if kind:
+            header += f" ({kind})"
         if path:
             new_tag = " [new file]" if is_new else ""
             header += f" — `{path}`{new_tag}"
@@ -159,8 +264,9 @@ def _render_swe_pro(identifiers: list[dict]) -> str:
         is_new = ident.get("is_new_file")
 
         header = f"### `{name}`"
-        if et:
-            header += f" ({et})"
+        kind = ident.get("entity_kind") or et      # Java: interface/enum/record; Python: None
+        if kind:
+            header += f" ({kind})"
         if path:
             new_tag = " [new file]" if is_new else ""
             header += f" — `{path}`{new_tag}"
@@ -194,7 +300,13 @@ def _render_swe_pro(identifiers: list[dict]) -> str:
 
 
 RENDERERS = {
+    "nameonly":  _render_nameonly,
     "nocode":    _render_nocode,
+    "declaration":     _render_ours,
+    "declaration_v2":  _render_ours,   # same block shape; field set differs only if _DECLARATION_V2_FIELDS does
+    # "ours_v2":       _render_ours,   # retired — see project_enriched.py
+    # "ours_v3":       _render_ours,   # retired — see project_enriched.py
+    "semantics_only":  _render_semantics_only,
     "fea_brief": _render_fea_brief,
     "swe_pro":   _render_swe_pro,
 }
@@ -203,6 +315,16 @@ RENDERERS = {
 # ---------------------------------------------------------------------------
 # Image name helpers
 # ---------------------------------------------------------------------------
+
+def _build_image_multi_swe_bench(base_row: dict, _unused: str = "") -> str:
+    """mswebench/{org}_m_{repo}:pr-{number} — mirrors multi_swe_bench/harness/image.py."""
+    repo = base_row.get("repo", "")
+    org, _, name = repo.partition("/")
+    number = base_row.get("number")
+    if not (org and name and number):
+        return ""
+    return f"mswebench/{org}_m_{name}:pr-{number}".lower()
+
 
 def _build_image_swebench_pro(base_row: dict, dockerhub_username: str) -> str:
     """Build image URI from dockerhub_tag — mirrors get_dockerhub_image_uri()."""
@@ -255,6 +377,8 @@ def generate(
 
         if benchmark == "swebench_pro":
             image_name = _build_image_swebench_pro(source_row, dockerhub_username)
+        elif benchmark == "multi_swe_bench":
+            image_name = _build_image_multi_swe_bench(source_row)
         else:  # swerebench
             image_name = source_row.get("image_name", "")
 
@@ -290,7 +414,7 @@ def main() -> None:
     )
     ap.add_argument(
         "--benchmark", "-b",
-        choices=["swebench_pro", "swerebench"],
+        choices=["swebench_pro", "swerebench", "multi_swe_bench"],
         required=True,
         help="Benchmark type: swebench_pro or swerebench. "
              "doc2feat is handled by generate_doc2feat_instances.py.",

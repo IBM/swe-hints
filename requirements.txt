@@ -1,6 +1,9 @@
 datasets
 pydantic
 rich
+# tree-sitter-languages 1.10.2 ships pre-built parsers for the 0.21.x C API;
+# on 0.22+ get_parser() raises TypeError: __init__() takes exactly 1 argument
+tree-sitter==0.21.3
 tree-sitter-languages
 unidiff
 
