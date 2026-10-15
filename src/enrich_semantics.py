@@ -35,8 +35,27 @@ Usage
 Environment variables
 ---------------------
   ENRICH_MODEL      litellm model string (default: openai/aws/claude-haiku-4-5)
-  ENRICH_API_BASE   API base URL
-  ENRICH_API_KEY    API key
+  ENRICH_API_BASE   API base URL      (gateway route only; unset for OpenRouter)
+  ENRICH_API_KEY    API key           (falls back to OPENROUTER_API_KEY on the
+                                       OpenRouter route)
+
+Provider routes
+---------------
+Same model and same sampling config either way; only the route changes.
+
+  gateway (default)
+      export ENRICH_MODEL="openai/aws/claude-haiku-4-5"
+      export ENRICH_API_BASE="https://your-gateway/v1"
+      export ENRICH_API_KEY="..."
+
+  OpenRouter
+      export ENRICH_MODEL="openrouter/anthropic/claude-haiku-4.5"
+      export OPENROUTER_API_KEY="..."        # or ENRICH_API_KEY
+
+  Note the slug spelling: OpenRouter writes Haiku 4.5 as
+  "anthropic/claude-haiku-4.5" (dots), while Anthropic's own API uses
+  "claude-haiku-4-5" (dashes).  Avoid "~anthropic/claude-haiku-latest" —
+  it is a floating alias and will silently change model under you.
 """
 
 from __future__ import annotations
@@ -46,6 +65,7 @@ import json
 import os
 import re
 import time
+from concurrent.futures import ThreadPoolExecutor, as_completed
 from pathlib import Path
 from typing import Optional
 
@@ -64,6 +84,36 @@ API_BASE = os.environ.get(
     "YOUR_API_BASE",
 )
 API_KEY = os.environ.get("ENRICH_API_KEY", "YOUR_API_KEY")
+
+# Unset, or still carrying the repo's placeholder defaults.
+_PLACEHOLDERS = {"", "YOUR_API_BASE", "YOUR_API_KEY"}
+
+
+def _route_kwargs() -> dict:
+    """Provider routing for litellm — model and sampling config are unchanged.
+
+    An "openrouter/..." model resolves its own base URL and reads
+    OPENROUTER_API_KEY, so api_base must NOT be forced on that route; the
+    gateway route needs an explicit api_base.  Placeholder values are dropped
+    either way so litellm falls back to its own env lookup instead of dialling
+    a URL named "YOUR_API_BASE".
+    """
+    kwargs: dict = {"model": MODEL}
+
+    if MODEL.startswith("openrouter/"):
+        key = API_KEY if API_KEY not in _PLACEHOLDERS else os.environ.get("OPENROUTER_API_KEY", "")
+        if key:
+            kwargs["api_key"] = key
+        # Only honour an explicit base (proxy / self-hosted OpenRouter mirror).
+        if API_BASE not in _PLACEHOLDERS:
+            kwargs["api_base"] = API_BASE
+        return kwargs
+
+    if API_BASE not in _PLACEHOLDERS:
+        kwargs["api_base"] = API_BASE
+    if API_KEY not in _PLACEHOLDERS:
+        kwargs["api_key"] = API_KEY
+    return kwargs
 # Lines of context to include around each patch hit
 _CONTEXT_LINES = 4
 
@@ -223,9 +273,7 @@ def call_llm(messages: list[dict], retries: int = 3, backoff: float = 10.0) -> s
     for attempt in range(retries):
         try:
             response = litellm.completion(
-                model=MODEL,
-                api_base=API_BASE,
-                api_key=API_KEY,
+                **_route_kwargs(),
                 temperature=0.3,
                 max_tokens=300,
                 messages=messages,
@@ -371,6 +419,7 @@ def run(
     limit: Optional[int] = None,
     dry_run: bool = False,
     skip_errors: bool = False,
+    workers: int = 1,
 ) -> None:
     # Load SWE-bench source for patch / test_patch / problem_statement
     tqdm.write(f"Loading SWE-bench source from {source_path} …")
@@ -410,50 +459,63 @@ def run(
         f"{total_to_enrich} identifiers to enrich."
     )
 
+    def _process(rec: dict) -> tuple[dict, str]:
+        """Enrich one instance.  Returns (record to write, "ok"|"err"|"skip")."""
+        iid = rec["instance_id"]
+        swe_row = swe_index.get(iid)
+
+        if swe_row is None:
+            tqdm.write(f"  [skip] {iid} — not found in source JSONL")
+            # Return the record unchanged so we don't lose it
+            return rec, "skip"
+
+        problem_statement = swe_row.get("problem_statement", "")
+        patch             = swe_row.get("patch", "")
+        test_patch        = swe_row.get("test_patch", "")
+
+        enriched_identifiers: list[dict] = []
+        instance_ok = True
+
+        for ident in rec.get("identifiers", []):
+            name = ident.get("name", "?")
+            try:
+                enriched = enrich_identifier(
+                    ident, problem_statement, patch, test_patch,
+                    dry_run=dry_run,
+                )
+                enriched_identifiers.append(enriched)
+            except Exception as exc:
+                tqdm.write(f"  [error] {iid}/{name}: {exc}")
+                enriched_identifiers.append(ident)  # keep original
+                if not skip_errors:
+                    instance_ok = False
+                    break
+
+        return {**rec, "identifiers": enriched_identifiers}, ("ok" if instance_ok else "err")
+
     n_ok = n_err = n_skipped_source = 0
+    _tally = {"ok": 0, "err": 0, "skip": 0}
 
     with open(output_path, "a", encoding="utf-8", buffering=1) as out_f:
-        for rec in tqdm(hints_records, unit="inst"):
-            iid = rec["instance_id"]
-            swe_row = swe_index.get(iid)
+        if workers > 1 and not dry_run:
+            # One worker per in-flight instance; identifiers within an instance
+            # stay sequential.  Records are written by this thread as futures
+            # land, so output order follows completion, not input order — the
+            # consumers key on instance_id and resume reads the file back as a
+            # set, so order carries no meaning.
+            with ThreadPoolExecutor(max_workers=workers) as pool:
+                futures = {pool.submit(_process, rec): rec for rec in hints_records}
+                for fut in tqdm(as_completed(futures), total=len(futures), unit="inst"):
+                    out_rec, status = fut.result()
+                    out_f.write(json.dumps(out_rec, ensure_ascii=False) + "\n")
+                    _tally[status] += 1
+        else:
+            for rec in tqdm(hints_records, unit="inst"):
+                out_rec, status = _process(rec)
+                out_f.write(json.dumps(out_rec, ensure_ascii=False) + "\n")
+                _tally[status] += 1
 
-            if swe_row is None:
-                tqdm.write(f"  [skip] {iid} — not found in source JSONL")
-                n_skipped_source += 1
-                # Write record unchanged so we don't lose it
-                out_f.write(json.dumps(rec, ensure_ascii=False) + "\n")
-                continue
-
-            problem_statement = swe_row.get("problem_statement", "")
-            patch             = swe_row.get("patch", "")
-            test_patch        = swe_row.get("test_patch", "")
-
-            enriched_identifiers: list[dict] = []
-            instance_ok = True
-
-            for ident in rec.get("identifiers", []):
-                name = ident.get("name", "?")
-                try:
-                    enriched = enrich_identifier(
-                        ident, problem_statement, patch, test_patch,
-                        dry_run=dry_run,
-                    )
-                    enriched_identifiers.append(enriched)
-                except Exception as exc:
-                    tqdm.write(f"  [error] {iid}/{name}: {exc}")
-                    enriched_identifiers.append(ident)  # keep original
-                    if not skip_errors:
-                        instance_ok = False
-                        n_err += 1
-                        break
-
-            out_rec = {**rec, "identifiers": enriched_identifiers}
-            out_f.write(json.dumps(out_rec, ensure_ascii=False) + "\n")
-
-            if instance_ok:
-                n_ok += 1
-            else:
-                n_err += 1
+    n_ok, n_err, n_skipped_source = _tally["ok"], _tally["err"], _tally["skip"]
 
     print(
         f"\nDone. ok={n_ok}  errors={n_err}  "
@@ -516,7 +578,18 @@ def _cli() -> None:
         action="store_true",
         help="On LLM error, keep the original identifier record and continue.",
     )
+    parser.add_argument(
+        "--workers", "-w",
+        type=int,
+        default=1,
+        help="Instances enriched concurrently (default: 1 — serial).\n"
+             "Identifiers within one instance stay sequential.  Ignored with\n"
+             "--dry-run.  Output order follows completion, not input order.",
+    )
     args = parser.parse_args()
+
+    if args.workers < 1:
+        parser.error("--workers must be >= 1")
 
     run(
         hints_path=args.hints,
@@ -526,6 +599,7 @@ def _cli() -> None:
         limit=args.limit,
         dry_run=args.dry_run,
         skip_errors=args.skip_errors,
+        workers=args.workers,
     )
 
 

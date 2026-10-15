@@ -1,9 +1,9 @@
 # NoCode Identity Selection — Commands
 
-All commands are run from the **hints repo root** (`hints_publish`).
+All commands are run from the **repository root**.
 
 ```bash
-cd /path/to/hints_publish && source .venv/bin/activate
+cd /path/to/swe-hints && source .venv/bin/activate
 ```
 
 ---

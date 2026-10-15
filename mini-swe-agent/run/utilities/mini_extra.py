@@ -17,6 +17,7 @@ subcommands = [
     ("minisweagent.run.benchmarks.swebench_single", ["swebench-single"], "Evaluate on SWE-bench (single instance)"),
     ("minisweagent.run.benchmarks.programbench", ["programbench"], "Run on ProgramBench (batch mode)"),
     ("minisweagent.run.benchmarks.doc2feat", ["doc2feat"], "Evaluate on Doc2Feat-bench (batch mode)"),
+    ("minisweagent.run.benchmarks.multi_swe_bench", ["multi-swe-bench", "msb"], "Evaluate on Multi-SWE-bench Java (batch mode)"),
 ]
 
 

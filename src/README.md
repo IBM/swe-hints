@@ -1,256 +1,283 @@
-# Hints Pipeline
+# The Hint Pipeline
 
-End-to-end pipeline for generating identifier-level hints from SWE-bench Pro
-(Python subset), controlled by two independent dimensions:
+The code in this directory turns a benchmark's tasks into DefUse hints, with the attributes
+of every selected identifier. Run all commands from the repository root, in the environment
+from the root README's [Setup](../README.md#setup), with the variables (`BENCH`, `INPUT`,
+`REPOS`, `OUT`) from its [Quick start](../README.md#quick-start-defuse-hints-for-your-own-benchmark).
 
-1. **Which identifiers** — usage operator (step 1)
-2. **How much to reveal** — taxonomy level (step 2)
-3. **How to enrich semantics** — LLM-based post-processing (after step 2)
+| step | module | output |
+|---|---|---|
+| 1. extract | `identifier_usage.py` (uses `identifier_extractor.py`) | which names each patch reads and writes, plus a catalogue of everything known about each name |
+| 2. select | `identifier_information.py` | the DefUse identifiers with their attributes |
+| 3. describe | `enrich_semantics.py` | LLM-written descriptions, only needed by the `fea_brief` and `swe_pro` projections |
 
+## 1. Prepare the data
 
+### Input format
 
-## Constructing `repos-dir` (SWE-bench Pro Python)
+One JSON object per line, one line per task instance:
 
-The Python subset of SWE-bench Pro covers three GitHub repositories.
-Step 1 resets each repo to a `base_commit` and applies the patch, so
-**full history is required** (no shallow clones).
+| field | required | meaning |
+|---|---|---|
+| `instance_id` | yes | unique id |
+| `repo` | yes | GitHub `owner/name`, e.g. `ansible/ansible` |
+| `base_commit` | yes | commit the task starts from |
+| `patch` | yes | reference solution, unified diff, **without test files** (`feature_patch` is accepted instead) |
+| `test_patch` | yes | test changes, unified diff |
+| `problem_statement` | recommended | issue text; names it already mentions are dropped, and it becomes the agent's task |
+| `doc_changes` | optional | Doc2Feat only; replaces `problem_statement` for that filter |
+| `image_name` | optional | container image; copied into the agent's instances |
 
-### Clone the three repos
+Only Python files in the two patches are analysed; everything else is ignored. Without
+`problem_statement`, no names are dropped for being already visible.
 
-```bash
-mkdir -p repos/swe_pro_python_repos
+### Your own benchmark
 
-git clone https://github.com/ansible/ansible.git \
-    repos/swe_pro_python_repos/ansible
+Write those fields from whatever your benchmark stores; the pipeline reads only the JSONL.
+Check three things while you do:
 
-git clone https://github.com/qutebrowser/qutebrowser.git \
-    repos/swe_pro_python_repos/qutebrowser
+- **`base_commit` must exist in the public history of `repo`**, so that a fresh clone can
+  check it out.
+- **`patch` must apply cleanly** to `base_commit` with `git apply`, and so must
+  `test_patch` on top of it. Step 1 applies both.
+- **`instance_id` must be unique.** Every later file is joined on it.
 
-git clone https://github.com/internetarchive/openlibrary.git \
-    repos/swe_pro_python_repos/openlibrary
-```
+If your benchmark is a HuggingFace dataset, map its columns:
 
-### Verify
-
-```bash
-ls repos/swe_pro_python_repos/
-# ansible/   openlibrary/   qutebrowser/
-
-git -C repos/swe_pro_python_repos/ansible      log --oneline -1
-git -C repos/swe_pro_python_repos/qutebrowser  log --oneline -1
-git -C repos/swe_pro_python_repos/openlibrary  log --oneline -1
-```
-
-### Important: directory names must match the repo slug
-
-`identifier_usage.py` derives the local directory name as:
 ```python
-repo_name = instance["repo"].split("/")[-1]
-# "ansible/ansible"             -> "ansible"
-# "qutebrowser/qutebrowser"     -> "qutebrowser"
-# "internetarchive/openlibrary" -> "openlibrary"
-```
+import json
+from datasets import load_dataset
 
-So the directory names inside `repos/swe_pro_python_repos/` must be exactly
-`ansible`, `qutebrowser`, and `openlibrary`.
-
-### If you accidentally shallow-cloned
-
-```bash
-git -C repos/swe_pro_python_repos/ansible      fetch --unshallow
-git -C repos/swe_pro_python_repos/qutebrowser  fetch --unshallow
-git -C repos/swe_pro_python_repos/openlibrary  fetch --unshallow
-```
-
----
-
-## Step 1 — Identifier usage extraction
-
-Runs once per dataset. Resets each repo to `base_commit`, diffs before/after
-the patch, and stores the four read/write identifier sets for every instance.
-
-```bash
-python -m src.identifier_usage \
-  --input     /path/to/swebench_pro_python.jsonl \
-  --repos-dir repos/swe_pro_python_repos \
-  --output    results/step1_usage.jsonl \
-  --skip-errors
-```
-
-**Output format** (one JSON line per instance):
-```json
-{
-  "instance_id": "instance_ansible__ansible-...",
-  "code_read":  ["BaseRole", "TaskInclude", ...],
-  "code_write": ["RoleInclude", "load_data", ...],
-  "test_read":  ["RoleInclude", "load_data", ...],
-  "test_write": ["test_load", ...]
+ds = load_dataset("ORG/BENCHMARK", split="test")
+COLUMNS = {                      # pipeline field -> the dataset's column name
+    "instance_id": "instance_id",
+    "repo": "repo",
+    "base_commit": "base_commit",
+    "patch": "patch",
+    "test_patch": "test_patch",
+    "problem_statement": "problem_statement",
 }
+with open("data/mybench.jsonl", "w") as f:
+    for row in ds:
+        f.write(json.dumps({field: row[col] for field, col in COLUMNS.items()}) + "\n")
 ```
 
-To debug a single instance:
+Keep only Python tasks. If the benchmark has a language column, filter on it; SWE-bench
+Pro, for example, has `repo_language`.
+
+**If your benchmark ships one combined diff** with code and tests together, split it by
+file path. This heuristic recovers SWE-bench Pro's own code/test split on 263 of 266
+instances; the three misses are CI files the pipeline ignores anyway:
+
+```python
+import re
+from unidiff import PatchSet
+
+TEST_PATH = re.compile(r"(^|/)(tests?|testing)/|(^|/)test_[^/]*\.py$|_test\.py$|(^|/)conftest\.py$")
+
+def split_patch(diff: str) -> tuple[str, str]:
+    """Split one unified diff into (code_patch, test_patch) by file path."""
+    code, test = [], []
+    for pf in PatchSet(diff):
+        path = pf.target_file[2:] if pf.target_file != "/dev/null" else pf.source_file[2:]
+        (test if TEST_PATH.search(path) else code).append(str(pf))
+    return "".join(code), "".join(test)
+```
+
+Adjust `TEST_PATH` if the benchmark's repositories keep tests somewhere unusual.
+
+### The four benchmarks in the paper
+
+One script downloads Doc2Feat Verified, SWE-bench Pro (Python instances), FEA-Bench Lite
+and the SWE-rebench leaderboard (2026 partitions) into
+`identity_selection/data_selection/huggingface/`:
+
 ```bash
-python -m src.identifier_usage \
-  --input     /path/to/swebench_pro_python.jsonl \
-  --repos-dir repos/swe_pro_python_repos \
-  --output    results/step1_debug.jsonl \
-  --instance-id "instance_ansible__ansible-a26c325b..."
+python identity_selection/data_selection/huggingface/download.py
 ```
 
----
+| benchmark | file written | note |
+|---|---|---|
+| Doc2Feat Verified | `doc2feat_verified.jsonl` | ready to use |
+| SWE-bench Pro | `swebench_pro_python.jsonl` | ready to use |
+| SWE-rebench | `swe_rebench_leaderboard.jsonl` | ready to use |
+| FEA-Bench Lite | `fea_bench_lite.jsonl` | **has no patches**; see below |
 
-## Step 2 — Hint construction
-
-Runs fast (no repo needed). Loads step 1 output + the augmented dataset,
-applies a **usage operator** to select identifiers, then projects each
-identifier to a **taxonomy level** controlling how much information to reveal.
+FEA-Bench does not publish its patches. Rebuild them with FEA-Bench's own pipeline, which
+needs a GitHub token:
 
 ```bash
-python -m src.identifier_information \
-  --usage      results/step1_usage.jsonl \
-  --augmented  /path/to/swebench_pro_augmented.jsonl \
-  --operator   forward \
-  --level      WeakSFunc \
-  --output     results/hints_forward_WeakSFunc.jsonl \
-  --skip-errors
+export GITHUB_TOKEN=...
+python repos/build_feabench_repos.py --repos-dir repos/feabench_repos
+python identity_selection/data_selection/huggingface/get_feabench_patches.py
+python -m helper_code.fea_bench_data.get_dataset \
+    --dataset identity_selection/data_selection/huggingface/fea_bench_lite_hf \
+    --testbed repos/feabench_repos \
+    --lite_ids helper_code/fea_bench_data/instances_lite.json \
+    --medium_file identity_selection/data_selection/huggingface/fea_bench_lite_with_patches.jsonl \
+    --standard_dataset_path identity_selection/data_selection/huggingface/fea_bench_Standard \
+    --oracle_dataset_path identity_selection/data_selection/huggingface/fea_bench_Oracle \
+    --lite_standard_dataset_path identity_selection/data_selection/huggingface/fea_bench_Lite_Standard \
+    --lite_oracle_dataset_path identity_selection/data_selection/huggingface/fea_bench_Lite_Oracle
 ```
 
-**Output format** (one JSON line per instance):
+Then use `fea_bench_lite_with_patches.jsonl` as `$INPUT`. The values used for each
+benchmark:
+
+| benchmark | `INPUT` (under `identity_selection/data_selection/huggingface/`) | `REPOS` | `OUT` |
+|---|---|---|---|
+| SWE-bench Pro | `swebench_pro_python.jsonl` | `repos/swe_pro_python_repos` | `results/swe_pro_proj` |
+| Doc2Feat-bench | `doc2feat_verified.jsonl` | `repos/doc2feat_repos` | `results/doc2feat_proj` |
+| SWE-rebench | `swe_rebench_leaderboard.jsonl` | `repos/swerebench_repos` | `results/swerebench_proj` |
+| FEA-Bench | `fea_bench_lite_with_patches.jsonl` | `repos/feabench_repos` | `results/feabench_proj` |
+
+On SWE-rebench one instance fails in step 1 because its base commit is gone
+(`chaoss__augur-3512`); `--skip-errors` skips it.
+
+## 2. Clone the repositories
+
+Every task's repository must be cloned with full history into `$REPOS`; see
+[repos/README.md](../repos/README.md).
+
+> Steps 1 and 2 of the next sections and the selection scripts **check out commits and
+> reset the clones in `$REPOS`**. Run one job at a time per `$REPOS`. To run in parallel,
+> give each job its own copy: `git clone --shared $REPOS/<name> <other_dir>/<name>`.
+
+## 3. Extract the identifiers (step 1)
+
+For every instance: which names each patch reads and writes, and a catalogue of everything
+known about each name (kind, path, signature, docstring, ...). WRITE and READ are collected
+at any nesting depth.
+
+```bash
+python -m src.identifier_usage --input $INPUT --repos-dir $REPOS \
+    --output $OUT/extracted_hints.jsonl --skip-errors
+```
+
+Step 1 takes one to two seconds per instance.
+
+## 4. Select with DefUse (step 2)
+
+Apply DefUse (operator `communication`), attach each name's attributes, then drop instances
+where DefUse selects nothing:
+
+```bash
+python -m src.identifier_information --usage $OUT/extracted_hints.jsonl \
+    --operator communication --level All \
+    --output $OUT/hints_defuse.jsonl --skip-errors
+python helper_code/filter_nonempty_identifiers.py \
+    --input $OUT/hints_defuse.jsonl --output $OUT/hints_defuse_nonempty.jsonl
+```
+
+Expect a sizeable share of instances to come out empty: DefUse selects nothing when the
+tests use no new name. On SWE-bench Pro, 68 of the 266 Python instances are non-empty.
+`$OUT/hints_defuse_nonempty.jsonl` is the DefUse result.
+
+### Operators
+
+`--operator` chooses the selection from step 1's four sets; DefUse is `communication`.
+
+| operator | formula | meaning |
+|---|---|---|
+| `forward` | `code_write ∩ test_read` | new APIs defined in code, used in tests |
+| `backward` | `code_read ∩ test_write` | test fixtures used in code |
+| `communication` | `(code_write ∩ test_read) ∪ (code_read ∩ test_write)` | DefUse: forward ∪ backward |
+| `intersection` | `(code_read ∪ code_write) ∩ (test_read ∪ test_write)` | any shared identifier |
+| `code_only` | `code_read ∪ code_write` | everything the code patch touches |
+| `test_only` | `test_read ∪ test_write` | everything the test patch touches |
+| `union` | all four sets | everything from both patches |
+
+`--level` chooses which attributes step 2 keeps; `All` keeps every one, and the projections
+of [identity_projection/README.md](../identity_projection/README.md) decide what the agent
+sees.
+
+## 5. Write the LLM descriptions (step 3)
+
+Only for the `fea_brief` and `swe_pro` projections. Step 2 fills the two description fields
+(`weak_semantics`, `strong_semantics`) from **the reference patch's own docstrings**
+whenever the new code has one; on SWE-bench Pro that is 47 of 160 identifiers. Showing
+those to an agent hands it the solution author's documentation. This step overwrites them
+with LLM-written text:
+
+```bash
+export ENRICH_MODEL=openai/aws/claude-haiku-4-5   # any litellm model string
+export ENRICH_API_BASE=https://...
+export ENRICH_API_KEY=...
+python -m src.enrich_semantics --hints $OUT/hints_defuse_nonempty.jsonl --source $INPUT \
+    --output $OUT/hints_defuse_nonempty_enriched.jsonl --skip-errors --workers 4
+```
+
+The step is resumable. `--workers N` enriches N instances at a time (default 1); the output
+rows then come in completion order, which nothing downstream depends on.
+`--dry-run --limit 5` builds the prompts without calling the model. The paper used Claude
+Haiku 4.5. LLM output differs between runs, so the descriptions cannot be regenerated byte
+for byte; the paper's hints are in [hints_to_release](../hints_to_release/README.md).
+
+## 6. Next steps
+
+- Project the hints and generate mini-SWE-agent instances:
+  [identity_projection/README.md](../identity_projection/README.md).
+- Compare DefUse with other selection policies:
+  [identity_selection/README.md](../identity_selection/README.md).
+
+## Output formats
+
+**Step 1** (`extracted_hints.jsonl`):
+
 ```json
-{
-  "instance_id": "instance_ansible__ansible-...",
-  "operator": "forward",
-  "level": "WeakSFunc",
-  "identifiers": [
-    {"name": "RoleInclude", "entity_type": "class", "weak_semantics": "..."},
-    {"name": "load_data",   "entity_type": "function", "weak_semantics": "..."}
-  ]
-}
+{"instance_id": "...", "code_read": [...], "code_write": ["b_data", "body", ...],
+ "test_read": [...], "test_write": [...], "catalogue": {"prepare_multipart": {...}}}
 ```
 
----
+New files are stored in `code_write` as paths (they contain a `/`) and are added to every
+operator that includes the code patch.
 
-## After Step 2 — Semantic enrichment
+**Step 2** (`hints_defuse.jsonl`), one entry per selected identifier, empty fields omitted:
 
-[`enrich_semantics.py`](src/enrich_semantics.py) runs **after step 2**. It reads a
-hints JSONL produced by [`identifier_information.py`](src/identifier_information.py:1)
-and overwrites `weak_semantics` / `strong_semantics` for every identifier using an
-LLM, with prompt context built from:
+```json
+{"instance_id": "instance_ansible__ansible-b748edea...", "operator": "communication", "level": "All",
+ "identifiers": [
+   {"name": "b_data", "entity_type": "variable"},
+   {"name": "prepare_multipart", "entity_type": "function",
+    "path": "lib/ansible/module_utils/urls.py", "is_new_file": false,
+    "signature": "prepare_multipart(fields)",
+    "complete_location": "lib/ansible/module_utils/urls.py:1399-1509",
+    "weak_semantics": "Takes a mapping, and prepares a multipart/form-data body",
+    "strong_semantics": "...", "exception_types": "TypeError, ValueError"}]}
+```
 
-- structural identifier facts already present in the step 2 output
-- `problem_statement` from the source SWE-bench JSONL
-- filtered `patch` and `test_patch` context around the identifier name
+Names the catalogue does not know, such as local variables, come out as just a name and
+`"entity_type": "variable"`.
 
-Typical usage:
+## Java (Multi-SWE-bench)
+
+The same steps, with a Java step 1. Put Multi-SWE-bench's Java instance files (one JSONL per
+repository) in `data/java/multi_swe_raw/`, then:
 
 ```bash
-python -m src.enrich_semantics \
-  --hints   results/hints_communication_All.jsonl \
-  --source  data/swebench_pro_python.jsonl \
-  --output  results/hints_communication_All_enriched.jsonl \
-  --skip-errors
+python helper_code/data_prepare/extract_multi_swe_bench_java.py \
+    --raw-dir data/java/multi_swe_raw --output data/java/multi_swe_bench_java.jsonl
+python repos/build_java_repos.py --input data/java/multi_swe_bench_java.jsonl \
+    --repos-dir repos/multi_swe_java_repos
+python -m src.identifier_usage_java --input data/java/multi_swe_bench_java.jsonl \
+    --repos-dir repos/multi_swe_java_repos \
+    --output results/java_msb_proj/extracted_hints.jsonl --skip-errors
 ```
 
-Useful modes:
+Step 2 is the same command as for Python, on `results/java_msb_proj/extracted_hints.jsonl`.
+Java has no module-level functions, so the extractor registers every member twice, once at
+top level and once under its class; and `entity_kind` (interface, enum, record, annotation)
+is not kept by step 2, so every Java type renders as a class.
 
-```bash
-# Smoke-test one instance
-python -m src.enrich_semantics \
-  --hints   results/hints_communication_All.jsonl \
-  --source  data/swebench_pro_python.jsonl \
-  --output  /tmp/enriched_one.jsonl \
-  --instance-id "instance_ansible__ansible-..."
+## Troubleshooting
 
-# Dry-run: build prompts only, no LLM calls
-python -m src.enrich_semantics \
-  --hints   results/hints_communication_All.jsonl \
-  --source  data/swebench_pro_python.jsonl \
-  --output  /tmp/enriched_dry.jsonl \
-  --dry-run \
-  --limit 2
-```
+| symptom | cause and fix |
+|---|---|
+| `TypeError: __init__() takes exactly 1 argument` | wrong tree-sitter; reinstall with `pip install -r requirements.txt` (or `requirements-lock.txt`), which pins `tree-sitter==0.21.3` |
+| `Repo not found: repos/.../<name>` | clone missing or named differently; see [repos/README.md](../repos/README.md) |
+| `CalledProcessError(128, ['git', 'checkout', ...])` | base commit not in the clone; fetch it by hash ([repos/README.md](../repos/README.md)) |
+| every instance empty after step 2 | `test_patch` empty or folded into `patch`; split it (section 1) |
+| step 1 errors with `git apply` failing | the patch does not apply at `base_commit`; check the patch and commit in your input |
+| a clone left on a detached commit or with changes | a run was interrupted; `git -C $REPOS/<name> reset --hard && git -C $REPOS/<name> clean -fdx` |
 
-Environment variables used by [`enrich_semantics.py`](src/enrich_semantics.py:61):
-
-- `ENRICH_MODEL`
-- `ENRICH_API_BASE`
-- `ENRICH_API_KEY`
-
----
-
-## Usage operators (step 1 dimension)
-
-| Operator        | Formula                                       | Meaning                          |
-|-----------------|-----------------------------------------------|----------------------------------|
-| `forward`       | `code_write ∩ test_read`                      | New APIs defined in code, used in tests |
-| `backward`      | `code_read ∩ test_write`                      | Test fixtures used in code       |
-| `communication` | `(code_write ∩ test_read) ∪ (code_read ∩ test_write)` | forward ∪ backward       |
-| `intersection`  | `(code_read ∪ code_write) ∩ (test_read ∪ test_write)` | Any shared identifier    |
-| `code_only`     | `code_read ∪ code_write`                      | Everything touched by code patch |
-| `test_only`     | `test_read ∪ test_write`                      | Everything touched by test patch |
-| `union`         | all four sets                                 | Everything from both patches     |
-
----
-
-## Taxonomy levels (step 2 dimension)
-
-Selected nodes from the hint taxonomy (coarse → fine):
-
-| Node          | Fields revealed                                              |
-|---------------|--------------------------------------------------------------|
-| `File`        | name, entity_type                                            |
-| `FileLoc`     | + path                                                       |
-| `Class`       | name, entity_type                                            |
-| `WeakSClass`  | + weak_semantics (short description)                         |
-| `StrongSClass`| + strong_semantics (detailed docstring)                      |
-| `LocParClass` | + partial_location                                           |
-| `LocCompClass`| + complete_location                                          |
-| `Func`        | name, entity_type                                            |
-| `Sign`        | + signature                                                  |
-| `InN`         | + input_spec, input_names                                    |
-| `InT`         | + input_spec, input_types                                    |
-| `OutPT`       | + output_partial_type                                        |
-| `OutCT`       | + output_partial_type, output_complete_type                  |
-| `WeakSFunc`   | + weak_semantics                                             |
-| `StrongSFunc` | + weak_semantics, strong_semantics                           |
-| `LocParFunc`  | + partial_location                                           |
-| `LocCompFunc` | + partial_location, complete_location                        |
-| `ExceptType`  | + exception_types                                            |
-| `ExceptValue` | + exception_types, exception_values                          |
-
-Use `with_nodes(["Sign", "WeakSFunc"])` in the Python API to combine multiple nodes.
-
----
-
-## Typical experiment run
-
-```bash
-# 1. Extract once (slow, needs repos)
-python -m src.identifier_usage \
-  --input     data/swebench_pro_python.jsonl \
-  --repos-dir repos/swe_pro_python_repos \
-  --output    results/step1_usage.jsonl \
-  --skip-errors
-
-# 2. Generate hints for different operator × level combinations (fast)
-for op in forward communication intersection; do
-  for level in File WeakSFunc Sign LocParFunc; do
-    python -m src.identifier_information \
-      --usage     results/step1_usage.jsonl \
-      --augmented data/swebench_pro_augmented.jsonl \
-      --operator  $op \
-      --level     $level \
-      --output    results/hints_${op}_${level}.jsonl \
-      --skip-errors
-  done
-done
-
-# 3. Optionally enrich semantics after step 2 (LLM-based)
-python -m src.enrich_semantics \
-  --hints   results/hints_communication_All.jsonl \
-  --source  data/swebench_pro_python.jsonl \
-  --output  results/hints_communication_All_enriched.jsonl \
-  --skip-errors
-```
-
-# Made with Bob
+Debug one instance by adding `--instance-id <id>` to any command in sections 3 to 5.

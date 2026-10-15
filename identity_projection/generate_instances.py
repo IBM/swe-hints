@@ -5,7 +5,10 @@ Generate mini-SWE-agent instance JSONL files from identity_projection outputs.
 Reads a projected hints JSONL (from project_enriched.py) and a source benchmark
 JSONL (for problem_statement, repo, base_commit, image_name / dockerhub_tag),
 joins them on instance_id, renders the identifiers into a hints string, and
-writes a mini-SWE-agent ready JSONL.
+writes a mini-SWE-agent ready JSONL.  For FEA-Bench the source can also be the
+dataset folder FEA-Bench builds (e.g. FEA-Bench-v1.0-Standard, read with
+datasets.load_from_disk); its rows carry no image name, so the image is derived
+from instance_id the way the FEA-Bench runs named it.
 
 Output per instance:
     {
@@ -14,7 +17,7 @@ Output per instance:
       "problem_statement": "...",
       "hints":             "<rendered hints string>",
       "base_commit":       "...",
-      "image_name":        "..."   (swebench_pro / swerebench only)
+      "image_name":        "..."
     }
 
 Hints rendering per projection
@@ -326,6 +329,12 @@ def _build_image_multi_swe_bench(base_row: dict, _unused: str = "") -> str:
     return f"mswebench/{org}_m_{name}:pr-{number}".lower()
 
 
+def _build_image_feabench(base_row: dict) -> str:
+    """feabench/sweb.eval.x86_64.{owner}_1776_{repo}-{n}:latest (SWE-bench image naming)."""
+    iid = base_row.get("instance_id", "")
+    return f"feabench/sweb.eval.x86_64.{iid.replace('__', '_1776_')}:latest".lower() if iid else ""
+
+
 def _build_image_swebench_pro(base_row: dict, dockerhub_username: str) -> str:
     """Build image URI from dockerhub_tag — mirrors get_dockerhub_image_uri()."""
     tag = base_row.get("dockerhub_tag", "")
@@ -337,6 +346,11 @@ def _build_image_swebench_pro(base_row: dict, dockerhub_username: str) -> str:
 # ---------------------------------------------------------------------------
 
 def _load_jsonl(path: Path) -> dict[str, dict]:
+    if path.is_dir():  # a datasets.save_to_disk folder, e.g. FEA-Bench-v1.0-Standard
+        from datasets import load_from_disk
+        ds = load_from_disk(str(path))
+        rows = ds["test"] if hasattr(ds, "keys") and "test" in ds else ds
+        return {row["instance_id"]: dict(row) for row in rows}
     index: dict[str, dict] = {}
     with path.open(encoding="utf-8") as f:
         for line in f:
@@ -377,6 +391,8 @@ def generate(
 
         if benchmark == "swebench_pro":
             image_name = _build_image_swebench_pro(source_row, dockerhub_username)
+        elif benchmark == "feabench":
+            image_name = _build_image_feabench(source_row)
         elif benchmark == "multi_swe_bench":
             image_name = _build_image_multi_swe_bench(source_row)
         else:  # swerebench
@@ -410,13 +426,14 @@ def main() -> None:
     )
     ap.add_argument(
         "--source", "-s", type=Path, required=True,
-        help="Raw benchmark JSONL (problem_statement, repo, base_commit, image_name / dockerhub_tag).",
+        help="Raw benchmark JSONL (problem_statement, repo, base_commit, image_name / dockerhub_tag), "
+             "or for FEA-Bench the dataset folder (e.g. FEA-Bench-v1.0-Standard).",
     )
     ap.add_argument(
         "--benchmark", "-b",
-        choices=["swebench_pro", "swerebench", "multi_swe_bench"],
+        choices=["swebench_pro", "swerebench", "feabench", "multi_swe_bench"],
         required=True,
-        help="Benchmark type: swebench_pro or swerebench. "
+        help="Benchmark type. swerebench also covers any benchmark whose rows carry image_name. "
              "doc2feat is handled by generate_doc2feat_instances.py.",
     )
     ap.add_argument(

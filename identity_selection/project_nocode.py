@@ -11,7 +11,7 @@ Handles three source shapes:
   augmentations — flat (nocode):
         {"header": "...", "data": [{type, name}, ...]}
 
-  augmentations — directional (defuse2 / defuse2_relaxed):
+  augmentations — directional (defuse2):
         {"forward":  {"header": "...", "data": [...]},
          "backward": {"header": "...", "data": [...]}}
 
@@ -148,16 +148,21 @@ def main() -> None:
     )
     ap.add_argument(
         "--input", "-i", type=Path, required=True,
-        help="Directory containing union_defuse_nocode/ JSONL files.",
+        help="A selection JSONL file, or a directory of them (e.g. union_defuse_nocode/).",
     )
     ap.add_argument(
         "--output", "-o", type=Path, required=True,
-        help="Output directory for projected JSONL files (created if missing).",
+        help="Output JSONL file (for a file input) or directory (created if missing).",
     )
     args = ap.parse_args()
 
+    if args.input.is_file():
+        dst = args.output if args.output.suffix == ".jsonl" else args.output / args.input.name
+        dst.parent.mkdir(parents=True, exist_ok=True)
+        project_file(args.input, dst)
+        return
     if not args.input.is_dir():
-        sys.exit(f"Input directory not found: {args.input}")
+        sys.exit(f"Input not found: {args.input}")
 
     jsonl_files = sorted(args.input.glob("*.jsonl"))
     if not jsonl_files:

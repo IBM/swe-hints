@@ -6,6 +6,10 @@ rich
 tree-sitter==0.21.3
 tree-sitter-languages
 unidiff
+tqdm
+
+# LLM steps: descriptions (src/enrich_semantics.py), the SWE-bench Pro baseline, the judge
+litellm
 
 # FEA-Bench data pipeline (helper_code/fea_bench_data/)
 # ghapi 2.x made all calls async; FEA-Bench code requires the synchronous 1.x API

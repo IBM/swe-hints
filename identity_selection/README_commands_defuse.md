@@ -1,10 +1,14 @@
-# DefUse2 Identity Selection — Commands
+# DefUse Identity Selection (`defuse2.py`) — Commands
 
-All commands are run from the **hints repo root** (`hints_publish`).
+All commands are run from the **repository root**.
 
 ```bash
-cd /path/to/hints_publish && source .venv/bin/activate
+cd /path/to/swe-hints && source .venv/bin/activate
 ```
+
+Output goes to `identity_selection/results_selection/defuse2_relaxed_sel/raw/`. The
+`defuse2_relaxed` output names are kept from before the relaxed variant became the only
+`defuse2.py`; they match the existing selection results and the paper's arm name.
 
 ---
 
@@ -15,7 +19,7 @@ Input is the HuggingFace JSONL downloaded by `download.py` (already has `feature
 ```bash
 python identity_selection/defuse2.py \
     --input  identity_selection/data_selection/huggingface/doc2feat_verified.jsonl \
-    --output identity_selection/results_selection/defuse2_sel/raw/ncbench_defuse2.jsonl \
+    --output identity_selection/results_selection/defuse2_relaxed_sel/raw/ncbench_defuse2_relaxed.jsonl \
     --repos  repos/doc2feat_repos
 ```
 
@@ -29,7 +33,7 @@ Patches must be fetched from GitHub first — see `README_commands.md` steps 1 &
 ```bash
 python identity_selection/defuse2.py \
     --input  identity_selection/data_selection/huggingface/fea_bench_lite_with_patches.jsonl \
-    --output identity_selection/results_selection/defuse2_sel/raw/feabench_defuse2.jsonl \
+    --output identity_selection/results_selection/defuse2_relaxed_sel/raw/feabench_defuse2_relaxed.jsonl \
     --repos  repos/feabench_repos
 ```
 
@@ -42,7 +46,7 @@ Input is the HuggingFace JSONL downloaded by `download.py` (already has `patch` 
 ```bash
 python identity_selection/defuse2.py \
     --input  identity_selection/data_selection/huggingface/swebench_pro_python.jsonl \
-    --output identity_selection/results_selection/defuse2_sel/raw/swebench_pro_defuse2.jsonl \
+    --output identity_selection/results_selection/defuse2_relaxed_sel/raw/swebench_pro_defuse2_relaxed.jsonl \
     --repos  repos/swe_pro_python_repos
 ```
 
@@ -67,7 +71,7 @@ cd repos/swerebench_repos/sqlglot && git fetch origin \
   74b4e7c311e9d4ff39ce2e4d91940eced96aa32f \
   2607a3ad44f039a076626abafb5340e70aa2e18b \
   bb4eda1beb68b92de9ab014a63c67797a07df2fa
-cd /path/to/hints_publish
+cd /path/to/swe-hints
 ```
 
 **`chaoss/augur`** — 1 commit permanently deleted from GitHub (HTTP 404). Cannot be recovered.
@@ -82,7 +86,7 @@ Will be skipped by `--skip-errors`:
 ```bash
 python identity_selection/defuse2.py \
     --input  identity_selection/data_selection/huggingface/swe_rebench_leaderboard.jsonl \
-    --output identity_selection/results_selection/defuse2_sel/raw/swerebench_defuse2.jsonl \
+    --output identity_selection/results_selection/defuse2_relaxed_sel/raw/swerebench_defuse2_relaxed.jsonl \
     --repos  repos/swerebench_repos \
     --skip-errors
 ```
@@ -96,7 +100,7 @@ Add `--instance-id` to any command above to process just one instance:
 ```bash
 python identity_selection/defuse2.py \
     --input  identity_selection/data_selection/huggingface/doc2feat_verified.jsonl \
-    --output /tmp/test_defuse2.jsonl \
+    --output /tmp/test_defuse2_relaxed.jsonl \
     --repos  repos/doc2feat_repos \
     --instance-id psf__requests-5856
 ```
@@ -110,7 +114,7 @@ Add `--skip-errors` to continue past failed instances and write a `.errors.jsonl
 ```bash
 python identity_selection/defuse2.py \
     --input  identity_selection/data_selection/huggingface/swebench_pro_python.jsonl \
-    --output identity_selection/results_selection/defuse2_sel/raw/swebench_pro_defuse2.jsonl \
+    --output identity_selection/results_selection/defuse2_relaxed_sel/raw/swebench_pro_defuse2_relaxed.jsonl \
     --repos  repos/swe_pro_python_repos \
     --skip-errors
 ```

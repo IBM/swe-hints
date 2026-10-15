@@ -1,17 +1,18 @@
 #!/usr/bin/env python3
 """
-DefUse2 identity selection — faithful port of augment_comm_v3_enhanced.py (NoCode-bench).
+DefUse identifier selection: names the code patch defines and the test patch
+uses, or the test patch defines and the code patch uses.
 
-Algorithm mirrors augment_comm_v3_enhanced.py exactly:
-  - run_cmd uses list commands, check=True (raises on error)
-  - reset_repo: 5-step sequence (reset+clean+checkout+reset+clean)
-  - write_and_apply_patch: writes to repo_dir, uses 'git apply --check' then 'git apply'
-  - Only module-level WRITE entities considered (function/class defs, assignments)
-  - Forward hints  = impl[WRITE] ∩ test[READ]  (new APIs)
-  - Backward hints = impl[READ]  ∩ test[WRITE] (test fixtures/mocks)
-  - New .py files from impl patch added to forward unconditionally
-  - Entities already in problem statement / doc_changes filtered out
-  - Repo restored to base_commit at end of each instance
+  - Forward hints  = impl[WRITE] ∩ test[READ]
+  - Backward hints = impl[READ]  ∩ test[WRITE]
+  - New .py files are added to forward hints unconditionally.
+  - Names already in the problem statement / doc_changes are dropped.
+
+WRITE and READ are collected at ANY nesting depth (function bodies, nested
+classes, etc.), not just module-level or class-body-level. (This used to be
+the "relaxed" variant, defuse2_relaxed.py; the module-level-only variant was
+removed. is_at_module_level / is_at_module_or_class_level are still defined
+but not called.)
 
 Supported datasets (auto-detected from fields):
   - NoCode Bench Verified   : feature_patch + test_patch + doc_changes
@@ -24,29 +25,31 @@ The raw HuggingFace dataset does not contain patch fields.
 
 Usage:
     python identity_selection/defuse2.py \\
-        --input  /path/to/NoCode-bench/ncbench_verified_no_hint.jsonl \\
-        --output results/ncbench_defuse2.jsonl \\
-        --repos  /path/to/NoCode-bench/repos
+        --input  identity_selection/data_selection/huggingface/doc2feat_verified.jsonl \\
+        --output identity_selection/results_selection/defuse2_relaxed_sel/raw/ncbench_defuse2_relaxed.jsonl \\
+        --repos  repos/doc2feat_repos
 
     python identity_selection/defuse2.py \\
-        --input  /path/to/FEA-Bench/feabench-data/FEA-Bench-v1.0-medium.jsonl \\
-        --output results/feabench_defuse2.jsonl \\
-        --repos  /path/to/FEA-Bench/feabench-data/testbed
+        --input  identity_selection/data_selection/huggingface/fea_bench_lite_with_patches.jsonl \\
+        --output identity_selection/results_selection/defuse2_relaxed_sel/raw/feabench_defuse2_relaxed.jsonl \\
+        --repos  repos/feabench_repos
 
     python identity_selection/defuse2.py \\
-        --input  /path/to/SWE-bench_Pro-os/swebench_pro.jsonl \\
-        --output results/swebench_pro_defuse2.jsonl \\
-        --repos  /path/to/SWE-bench_Pro-os/repos
+        --input  identity_selection/data_selection/huggingface/swebench_pro_python.jsonl \\
+        --output identity_selection/results_selection/defuse2_relaxed_sel/raw/swebench_pro_defuse2_relaxed.jsonl \\
+        --repos  repos/swe_pro_python_repos
 
     python identity_selection/defuse2.py \\
-        --input  data/swerebench_2026.jsonl \\
-        --output results/swerebench_defuse2.jsonl \\
-        --repos  repos/swerebench_repos
+        --input  identity_selection/data_selection/huggingface/swe_rebench_leaderboard.jsonl \\
+        --output identity_selection/results_selection/defuse2_relaxed_sel/raw/swerebench_defuse2_relaxed.jsonl \\
+        --repos  repos/swerebench_repos \\
+        --skip-errors
 """
 
 from __future__ import annotations
 
 import argparse
+import re
 import subprocess
 import sys
 from dataclasses import dataclass
@@ -218,27 +221,23 @@ def is_write_context(node) -> bool:
     parent = node.parent
     parent_type = parent.type
 
-    # Function/class names: only module-level defs are public API entries.
+    # Function/class name definitions — at any depth.
     if parent_type in ["function_definition", "class_definition"]:
         if node == parent.child_by_field_name("name"):
-            return is_at_module_or_class_level(parent)
+            return True
 
-    # Variable assignments: module-level and one level inside a class body.
+    # Variable assignments — at any depth.
     if parent_type == "assignment":
         left = parent.child_by_field_name("left")
         if left and _node_contains(left, node):
-            return is_at_module_or_class_level(parent)
+            return True
 
     return False
 
 
 def is_read_context(node) -> bool:
-    """True when the identifier is used (read) at module or class-body level."""
+    """True when the identifier is used (read) at any scope depth."""
     if node.parent is None:
-        return False
-
-    # Only collect reads from module-level or class-body scope.
-    if not is_at_module_or_class_level(node):
         return False
 
     parent = node.parent
@@ -424,8 +423,7 @@ def get_all_identifiers_with_access(
     def traverse(node):
         # Intercept import statements — consume them here, skip normal descent.
         if node.type in ("import_statement", "import_from_statement"):
-            if is_at_module_or_class_level(node):
-                _extract_import(node, local_modules, file_path, results)
+            _extract_import(node, local_modules, file_path, results)
             return
 
         if node.type in ["raise_statement", "with_clause"]:
@@ -588,6 +586,23 @@ def get_diff_entities_with_access(example: dict, repo_dir: Path,
 # get_communication_hints() and add_augmentations()
 # ---------------------------------------------------------------------------
 
+# Minimum normalized length before an error message is allowed to match the
+# test patch.  Short strings ("timeout") collide with unrelated test code.
+_MIN_ERR_MSG_CHARS = 12
+
+
+def _norm_msg(text: str) -> str:
+    """Normalize an error-message string for cross-patch matching.
+
+    A raise site and the assertion on it rarely agree verbatim: the impl writes
+    an f-string or %-format, the test writes a substring or a regex.  Strip the
+    interpolation holes and collapse whitespace so the two forms can meet.
+    """
+    text = re.sub(r"\{[^}]*\}", " ", text)                 # f-string placeholders
+    text = re.sub(r"%[-#0-9.]*[sdrfgex]", " ", text)        # %-format specifiers
+    return " ".join(text.lower().split())
+
+
 def get_communication_hints(example: dict, repos_dir: Path) -> Dict[str, Set[Entity]]:
     """Compute forward and backward communication hints."""
     repo = example.get("repo", "")
@@ -610,6 +625,19 @@ def get_communication_hints(example: dict, repos_dir: Path) -> Dict[str, Set[Ent
 
     forward_hints: Set[Entity] = {e for e in code_write if e.name in forward_names}
     forward_hints.update(new_files)
+
+    # Error messages are WRITE on both sides — the impl raises the message and
+    # the test asserts on it via pytest.raises — so they can never survive the
+    # WRITE n READ intersection above.  Inject them the way new files are
+    # injected, but only when the message text actually reaches the test patch,
+    # so the "the tests exercise this" contract still holds.
+    test_blob = _norm_msg(get_test_patch(example))
+    for e in code_write:
+        if e.entity_type != "error_msg":
+            continue
+        msg = _norm_msg(e.name)
+        if len(msg) >= _MIN_ERR_MSG_CHARS and msg in test_blob:
+            forward_hints.add(e)
 
     code_read  = filter_entities_by_access(feature_entities_for_matching, AccessType.READ)
     test_write = filter_entities_by_access(test_entities_for_matching,    AccessType.WRITE)
@@ -714,7 +742,7 @@ def main(
 
 if __name__ == "__main__":
     argp = argparse.ArgumentParser(
-        description="Generate communication-based augmentation hints (DefUse2)"
+        description="Generate communication-based augmentation hints (DefUse)"
     )
     argp.add_argument("--input",  "-i", type=Path, required=True,
                       help="Input JSONL. NoCode Bench: ncbench_verified_no_hint.jsonl; "

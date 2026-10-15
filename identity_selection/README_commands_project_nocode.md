@@ -1,9 +1,9 @@
 # NoCode Projection — Commands
 
-All commands are run from the **hints repo root** (`hints_publish`).
+All commands are run from the **repository root**.
 
 ```bash
-cd /path/to/hints_publish && source .venv/bin/activate
+cd /path/to/swe-hints && source .venv/bin/activate
 ```
 
 Output goes to `projected_nocode/` under each selection folder.
@@ -18,7 +18,7 @@ applies a **uniform NoCode view**: every instance is reduced to just its
 
 Two `augmentations` shapes are handled:
 - **Flat** (`nocode` / `fea_brief`): `{header, data: [{type, name}]}`
-- **Directional** (`defuse2` / `defuse2_relaxed`): `{forward: {data}, backward: {data}}`
+- **Directional** (`defuse2`): `{forward: {data}, backward: {data}}`
   — both lists are merged into a single flat `data` list.
 
 Output per instance (`projected_nocode/*.jsonl`):
@@ -135,7 +135,13 @@ python identity_selection/project_swe_pro_nocode_llm.py \
 
 ## Step 2 — Generate mini-SWE-agent JSONL files
 
-Uses [`helper_code/generate_minisweagent_instances.py`](../helper_code/generate_minisweagent_instances.py)
+> **Not runnable from this repository.** Steps 2 and 2b call generators with
+> `--selection_hints` / `--selection_base`, which no script here provides. To turn the
+> `projected_nocode/` files from step 1 into agent instances, run
+> `build_selection_enriched.py` and then `identity_projection/` (README.md in this folder,
+> section 3).
+
+Uses a `generate_minisweagent_instances.py` that takes `--selection_hints` (not in this repository)
 with `--selection_hints` (projected_nocode) + `--selection_base` (union_defuse_nocode).
 
 - **swerebench**: `image_name` is taken directly from the base row — no `--dockerhub_username` needed.

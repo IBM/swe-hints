@@ -1,249 +1,119 @@
-# Identity Projection
+# Projections and Agent Instances
 
-Applies taxonomy projections to enriched identifier hints.
+The code in this directory decides **how much** a hint reveals about each selected
+identifier, and writes the mini-SWE-agent instances: each benchmark row with the rendered
+hint added as a `hints` field. Run all commands from the repository root, in the environment
+from the root README's [Setup](../README.md#setup), with the variables (`BENCH`, `INPUT`,
+`OUT`) from its [Quick start](../README.md#quick-start-defuse-hints-for-your-own-benchmark). The input is the
+DefUse result of [src/README.md](../src/README.md#4-select-with-defuse-step-2), or a
+selection prepared as in [identity_selection/README.md](../identity_selection/README.md#3-turn-a-selection-into-mini-swe-agent-instances).
 
-**Input:** `results/<bench>/hints_communication_all_nonempty_enriched.jsonl`  
-**Script:** `identity_projection/project_enriched.py`  
-**Output:** `identity_projection/results_projection/<proj>_proj/<bench>.jsonl`
+## 1. Choose a projection
 
----
+| projection (`-p`) | name in the paper | shows per identifier | needs LLM descriptions |
+|---|---|---|---|
+| `nameonly` | Name Only | the name | no |
+| `nocode` | Doc2Feat | name and kind, in Doc2Feat-bench's format | no |
+| `declaration` | Declaration | name, kind, path, new-file flag and signature; class members nested under their class | no |
+| `fea_brief` | Declaration+Doc | `declaration` plus a one-sentence description | yes |
+| `swe_pro` | Pro | `fea_brief` plus a two-to-four sentence description of behaviour | yes |
 
-## Projections
+`declaration` is the projection we recommend: it gives the interface the hidden tests depend
+on, and no text describing how the solution works. For `fea_brief` and `swe_pro`, write the
+LLM descriptions first ([src/README.md](../src/README.md#5-write-the-llm-descriptions-step-3))
+and project the enriched file. The code also defines `semantics_only` and `declaration_v2`,
+which are experimental.
 
-| Projection | Fields exposed per identifier |
-|---|---|
-| `nocode` | `name`, `entity_type` |
-| `fea_brief` | `name`, `entity_type`, `path`, `is_new_file`, `signature`, `weak_semantics` |
-| `swe_pro` | `name`, `entity_type`, `path`, `is_new_file`, `signature`, `weak_semantics`, `strong_semantics` |
-
-For `fea_brief` and `swe_pro`, class identifiers also carry projected
-`cls_methods` and `cls_variables` sub-records using the same field subset
-(minus `path` / `is_new_file`, which are inherited from the parent class).
-
----
-
-## Benchmarks
-
-| Benchmark | Enriched input |
-|---|---|
-| `doc2feat` | `results/doc2feat_proj/hints_communication_all_nonempty_enriched.jsonl` |
-| `feabench` | `results/feabench_proj/hints_communication_all_nonempty_enriched.jsonl` |
-| `swe_pro` | `results/swe_pro_proj/hints_communication_all_nonempty_enriched.jsonl` |
-| `swerebench` | `results/swerebench_proj/hints_communication_all_nonempty_enriched.jsonl` |
-
----
-
-## Commands
-
-Run from repo root with the virtual environment active:
+## 2. Project
 
 ```bash
-cd /path/to/hints_publish && source .venv/bin/activate
+P=declaration        # nameonly | nocode | declaration | fea_brief | swe_pro
+python identity_projection/project_enriched.py \
+    -i $OUT/hints_defuse_nonempty.jsonl -o $OUT/${BENCH}_${P}_proj.jsonl -p $P
 ```
 
-### nocode projection
+## 3. Generate mini-SWE-agent instances
+
+| benchmark | generator | container image in each row |
+|---|---|---|
+| your own benchmark, SWE-rebench, any SWE-bench-style benchmark | `generate_instances.py -b swerebench` | the input row's `image_name` |
+| SWE-bench Pro | `generate_instances.py -b swebench_pro -d jefzda` | `jefzda/sweap-images:<dockerhub_tag>` |
+| FEA-Bench | `generate_instances.py -b feabench` | `feabench/sweb.eval.x86_64.<owner>_1776_<repo>-<n>:latest`, from `instance_id` |
+| Doc2Feat-bench | `generate_doc2feat_instances.py` | none; the runner names it `ncbench_<instance_id>:latest` |
+| Multi-SWE-bench Java | `generate_instances.py -b multi_swe_bench` | `mswebench/<org>_m_<repo>:pr-<number>` |
+
+```bash
+AGENT_IN=results/miniswe_${BENCH}/${BENCH}_${P}.jsonl
+
+# Your own benchmark, or SWE-rebench: input rows carry image_name
+python identity_projection/generate_instances.py -H $OUT/${BENCH}_${P}_proj.jsonl -s $INPUT \
+    -b swerebench -p $P -o $AGENT_IN
+
+# SWE-bench Pro: image built from dockerhub_tag
+python identity_projection/generate_instances.py -H $OUT/${BENCH}_${P}_proj.jsonl -s $INPUT \
+    -b swebench_pro -d jefzda -p $P -o $AGENT_IN
+
+# FEA-Bench: the source is the dataset folder FEA-Bench builds (e.g. FEA-Bench-v1.0-Standard)
+python identity_projection/generate_instances.py -H $OUT/${BENCH}_${P}_proj.jsonl \
+    -s /path/to/FEA-Bench-v1.0-Standard -b feabench -p $P -o $AGENT_IN
+
+# Doc2Feat-bench
+python identity_projection/generate_doc2feat_instances.py -H $OUT/${BENCH}_${P}_proj.jsonl -s $INPUT \
+    -p $P -o $AGENT_IN
+```
+
+Each row has `instance_id`, `repo`, `problem_statement`, `hints`, `base_commit`, and
+`image_name` (except for Doc2Feat-bench). For Doc2Feat-bench, the hint block the benchmark
+already appends to `problem_statement` is removed first.
+
+**The no-hint baseline.** Compare against the same instances with the hints removed. Copy
+any projection's file and blank the field:
+
+```bash
+python -c "import json,sys; [print(json.dumps({**json.loads(l), 'hints': ''})) for l in open(sys.argv[1])]" \
+    $AGENT_IN > results/miniswe_${BENCH}/${BENCH}_empty.jsonl
+```
+
+## 4. Run the agent
+
+See [mini-swe-agent/README.md](../mini-swe-agent/README.md).
+
+## What the agent sees
+
+For a step-2 record with the identifiers `b_data` (a variable) and `prepare_multipart` (a
+function in `lib/ansible/module_utils/urls.py`), the `hints` field reads:
+
+```text
+nameonly:
+If completing this task requires creating new files, classes, fields, or error messages, you may consider using the following suggested entity names:
+
+- `b_data`
+- `prepare_multipart`
+
+declaration:
+### `b_data` (variable)
+
+### `prepare_multipart` (function) — `lib/ansible/module_utils/urls.py`
+Signature: `prepare_multipart(fields)`
+```
+
+The benchmark configs in `mini-swe-agent/` insert it into the prompt inside a `<hints>`
+block, and leave the block out when `hints` is empty.
+
+## Java (Multi-SWE-bench)
+
+Project the Java DefUse result the same way, then generate with
+`-b multi_swe_bench` and the Multi-SWE-bench source:
 
 ```bash
 python identity_projection/project_enriched.py \
-    --input   results/doc2feat_proj/hints_communication_all_nonempty_enriched.jsonl \
-    --output  identity_projection/results_projection/nocode_proj/doc2feat_nocode_proj.jsonl \
-    --projection nocode
-
-python identity_projection/project_enriched.py \
-    --input   results/feabench_proj/hints_communication_all_nonempty_enriched.jsonl \
-    --output  identity_projection/results_projection/nocode_proj/feabench_nocode_proj.jsonl \
-    --projection nocode
-
-python identity_projection/project_enriched.py \
-    --input   results/swe_pro_proj/hints_communication_all_nonempty_enriched.jsonl \
-    --output  identity_projection/results_projection/nocode_proj/swe_pro_nocode_proj.jsonl \
-    --projection nocode
-
-python identity_projection/project_enriched.py \
-    --input   results/swerebench_proj/hints_communication_all_nonempty_enriched.jsonl \
-    --output  identity_projection/results_projection/nocode_proj/swerebench_nocode_proj.jsonl \
-    --projection nocode
+    -i results/java_msb_proj/hints_communication_all_nonempty.jsonl \
+    -o results/java_msb_proj/msb_declaration_proj.jsonl -p declaration
+python identity_projection/generate_instances.py -H results/java_msb_proj/msb_declaration_proj.jsonl \
+    -s data/java/multi_swe_bench_java.jsonl -b multi_swe_bench -p declaration \
+    -o results/miniswe_java/msb_declaration.jsonl
 ```
 
-### fea_brief projection
-
-```bash
-python identity_projection/project_enriched.py \
-    --input   results/doc2feat_proj/hints_communication_all_nonempty_enriched.jsonl \
-    --output  identity_projection/results_projection/fea_brief_proj/doc2feat_fea_brief_proj.jsonl \
-    --projection fea_brief
-
-python identity_projection/project_enriched.py \
-    --input   results/feabench_proj/hints_communication_all_nonempty_enriched.jsonl \
-    --output  identity_projection/results_projection/fea_brief_proj/feabench_fea_brief_proj.jsonl \
-    --projection fea_brief
-
-python identity_projection/project_enriched.py \
-    --input   results/swe_pro_proj/hints_communication_all_nonempty_enriched.jsonl \
-    --output  identity_projection/results_projection/fea_brief_proj/swe_pro_fea_brief_proj.jsonl \
-    --projection fea_brief
-
-python identity_projection/project_enriched.py \
-    --input   results/swerebench_proj/hints_communication_all_nonempty_enriched.jsonl \
-    --output  identity_projection/results_projection/fea_brief_proj/swerebench_fea_brief_proj.jsonl \
-    --projection fea_brief
-```
-
-### swe_pro projection
-
-```bash
-python identity_projection/project_enriched.py \
-    --input   results/doc2feat_proj/hints_communication_all_nonempty_enriched.jsonl \
-    --output  identity_projection/results_projection/swe_pro_proj/doc2feat_swe_pro_proj.jsonl \
-    --projection swe_pro
-
-python identity_projection/project_enriched.py \
-    --input   results/feabench_proj/hints_communication_all_nonempty_enriched.jsonl \
-    --output  identity_projection/results_projection/swe_pro_proj/feabench_swe_pro_proj.jsonl \
-    --projection swe_pro
-
-python identity_projection/project_enriched.py \
-    --input   results/swe_pro_proj/hints_communication_all_nonempty_enriched.jsonl \
-    --output  identity_projection/results_projection/swe_pro_proj/swe_pro_swe_pro_proj.jsonl \
-    --projection swe_pro
-
-python identity_projection/project_enriched.py \
-    --input   results/swerebench_proj/hints_communication_all_nonempty_enriched.jsonl \
-    --output  identity_projection/results_projection/swe_pro_proj/swerebench_swe_pro_proj.jsonl \
-    --projection swe_pro
-```
-
----
-
----
-
-## Step 2 — Generate mini-SWE-agent instances
-
-Uses [`identity_projection/generate_instances.py`](generate_instances.py).
-
-- **swebench_pro**: `image_name` built from `dockerhub_tag` — `--dockerhub_username` required.
-- **swerebench**: `image_name` taken directly from the source row.
-- **doc2feat**: handled by `helper_code/generate_doc2feat_instances.py` — not covered here.
-
-Output goes to `identity_projection/mini_swe/<proj>/<bench>_<proj>.jsonl`.
-
-### nocode — swebench_pro
-
-```bash
-python identity_projection/generate_instances.py \
-    --hints      identity_projection/results_projection/nocode_proj/swe_pro_nocode_proj.jsonl \
-    --source     identity_selection/data_selection/huggingface/swebench_pro_python.jsonl \
-    --benchmark  swebench_pro \
-    --projection nocode \
-    --dockerhub_username jefzda \
-    --output     identity_projection/mini_swe/nocode/swe_pro_nocode.jsonl
-```
-
-### nocode — swerebench
-
-```bash
-python identity_projection/generate_instances.py \
-    --hints      identity_projection/results_projection/nocode_proj/swerebench_nocode_proj.jsonl \
-    --source     identity_selection/data_selection/huggingface/swe_rebench_leaderboard.jsonl \
-    --benchmark  swerebench \
-    --projection nocode \
-    --output     identity_projection/mini_swe/nocode/swerebench_nocode.jsonl
-```
-
-### fea_brief — swebench_pro
-
-```bash
-python identity_projection/generate_instances.py \
-    --hints      identity_projection/results_projection/fea_brief_proj/swe_pro_fea_brief_proj.jsonl \
-    --source     identity_selection/data_selection/huggingface/swebench_pro_python.jsonl \
-    --benchmark  swebench_pro \
-    --projection fea_brief \
-    --dockerhub_username jefzda \
-    --output     identity_projection/mini_swe/fea_brief/swe_pro_fea_brief.jsonl
-```
-
-### fea_brief — swerebench
-
-```bash
-python identity_projection/generate_instances.py \
-    --hints      identity_projection/results_projection/fea_brief_proj/swerebench_fea_brief_proj.jsonl \
-    --source     identity_selection/data_selection/huggingface/swe_rebench_leaderboard.jsonl \
-    --benchmark  swerebench \
-    --projection fea_brief \
-    --output     identity_projection/mini_swe/fea_brief/swerebench_fea_brief.jsonl
-```
-
-### swe_pro — swebench_pro
-
-```bash
-python identity_projection/generate_instances.py \
-    --hints      identity_projection/results_projection/swe_pro_proj/swe_pro_swe_pro_proj.jsonl \
-    --source     identity_selection/data_selection/huggingface/swebench_pro_python.jsonl \
-    --benchmark  swebench_pro \
-    --projection swe_pro \
-    --dockerhub_username jefzda \
-    --output     identity_projection/mini_swe/swe_pro/swe_pro_swe_pro.jsonl
-```
-
-### swe_pro — swerebench
-
-```bash
-python identity_projection/generate_instances.py \
-    --hints      identity_projection/results_projection/swe_pro_proj/swerebench_swe_pro_proj.jsonl \
-    --source     identity_selection/data_selection/huggingface/swe_rebench_leaderboard.jsonl \
-    --benchmark  swerebench \
-    --projection swe_pro \
-    --output     identity_projection/mini_swe/swe_pro/swerebench_swe_pro.jsonl
-```
-
----
-
-## Step 2b — Generate mini-SWE-agent instances for Doc2Feat-bench
-
-Uses [`identity_projection/generate_doc2feat_instances.py`](generate_doc2feat_instances.py).
-No `--dockerhub_username` or `image_name` — doc2feat has no Docker images.
-The baked-in augmentation block is stripped from `problem_statement` automatically.
-
-### nocode — doc2feat
-
-```bash
-python identity_projection/generate_doc2feat_instances.py \
-    --hints      identity_projection/results_projection/nocode_proj/doc2feat_nocode_proj.jsonl \
-    --source     identity_selection/data_selection/huggingface/doc2feat_verified.jsonl \
-    --projection nocode \
-    --output     identity_projection/mini_swe/nocode/doc2feat_nocode.jsonl
-```
-
-### fea_brief — doc2feat
-
-```bash
-python identity_projection/generate_doc2feat_instances.py \
-    --hints      identity_projection/results_projection/fea_brief_proj/doc2feat_fea_brief_proj.jsonl \
-    --source     identity_selection/data_selection/huggingface/doc2feat_verified.jsonl \
-    --projection fea_brief \
-    --output     identity_projection/mini_swe/fea_brief/doc2feat_fea_brief.jsonl
-```
-
-### swe_pro — doc2feat
-
-```bash
-python identity_projection/generate_doc2feat_instances.py \
-    --hints      identity_projection/results_projection/swe_pro_proj/doc2feat_swe_pro_proj.jsonl \
-    --source     identity_selection/data_selection/huggingface/doc2feat_verified.jsonl \
-    --projection swe_pro \
-    --output     identity_projection/mini_swe/swe_pro/doc2feat_swe_pro.jsonl
-```
-
----
-
-## Debugging a single instance
-
-Add `--instance-id` to any command:
-
-```bash
-python identity_projection/project_enriched.py \
-    --input      results/swe_pro_proj/hints_communication_all_nonempty_enriched.jsonl \
-    --output     /tmp/debug.jsonl \
-    --projection swe_pro \
-    --instance-id "instance_ansible__ansible-395e5e20fab9cad517243372fa3c3c5d9e09ab2a-v7eee2454f617569fd6889f2211f75bc02a35f9f8"
-```
+Selections from the `*_java.py` scripts go through
+`helper_code/data_prepare/generate_msb_instances.py` instead
+([identity_selection/README.md](../identity_selection/README.md#java)).

@@ -92,9 +92,9 @@ def get_swebench_pro_docker_image_name(instance: dict) -> str:
 
 
 def get_sb_environment(config: dict, instance: dict) -> Environment:
-    # deepcopy, not setdefault: `config` is shared by every worker thread, so writing
-    # env_config["image"] into it would let one instance start in another's image once
-    # --workers > 1. doc2feat.py already copies; this runner did not.
+    # deepcopy, not setdefault: `config` is the one dict shared by every worker thread, so
+    # writing env_config["image"] into it would let instance A start in instance B's image
+    # once --workers > 1. doc2feat.py already does this; swebench.py did not.
     env_config = copy.deepcopy(config.get("environment", {}))
     env_config["environment_class"] = env_config.get("environment_class", "docker")
     get_image_name = (
@@ -103,7 +103,7 @@ def get_sb_environment(config: dict, instance: dict) -> Environment:
         else get_swebench_docker_image_name
     )
     image_name = get_image_name(instance)
-    if env_config["environment_class"] in ["docker", "swerex_modal"]:
+    if env_config["environment_class"] in ["docker", "swerex_modal", "swerex_daytona"]:
         env_config["image"] = image_name
     elif env_config["environment_class"] in ["singularity", "contree"]:
         env_config["image"] = "docker://" + image_name
@@ -111,8 +111,9 @@ def get_sb_environment(config: dict, instance: dict) -> Environment:
     env = get_environment(env_config)
     if startup_command := config.get("run", {}).get("env_startup_command"):
         startup_command = Template(startup_command, undefined=StrictUndefined).render(**instance)
-        # Environment.execute takes a dict (it calls action.get("command")); a bare string
-        # raises AttributeError.
+        # Every Environment.execute takes a dict and does action.get("command", ""); a bare
+        # string would raise AttributeError. Dormant only because no config sets
+        # run.env_startup_command today.
         out = env.execute({"command": startup_command})
         if out["returncode"] != 0:
             raise RuntimeError(f"Error executing startup command: {out}")

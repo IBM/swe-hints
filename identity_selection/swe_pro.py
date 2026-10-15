@@ -56,6 +56,7 @@ Usage:
 Environment variables:
   REQUIREMENTS_MODEL      Override the litellm model string
   REQUIREMENTS_API_BASE   Override the API base URL
+  REQUIREMENTS_API_KEY    API key for that endpoint
 """
 
 import argparse
@@ -100,7 +101,7 @@ def call_llm(messages: list[dict], retries: int = 3, backoff: float = 10.0) -> s
             kwargs: dict = dict(
                 model=MODEL,
                 api_base=API_BASE,
-                api_key="YOUR_API_KEY",
+                api_key=os.environ.get("REQUIREMENTS_API_KEY", "YOUR_API_KEY"),
                 temperature=1.0,
                 messages=messages,
                 reasoning_effort="high",

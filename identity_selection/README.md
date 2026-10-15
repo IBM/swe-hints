@@ -1,57 +1,110 @@
-# Identity Selection
+# Selection Policies
 
-Given the same projection, we select identities using four methods.
+The code in this directory decides **which** identifiers a hint reveals. It implements
+DefUse and the selection policies of three published hint schemes, so they can be compared
+under one fixed projection. Run all commands from the repository root, in the environment
+from the root README's [Setup](../README.md#setup), with the variables (`BENCH`, `INPUT`,
+`REPOS`, `OUT`) from its [Quick start](../README.md#quick-start-defuse-hints-for-your-own-benchmark).
 
-## Methods
+| policy | script | selects |
+|---|---|---|
+| DefUse | `defuse2.py` | names the code patch defines and the tests use, or the tests define and the code uses; plus new `.py` files and the error messages the tests assert on; names in the issue text are dropped |
+| Doc2Feat | `nocode.py` | new identifiers of the code patch (functions, classes, fields, error messages) whose name also appears among the test patch's new identifiers (after NoCode-bench's `augment.py`) |
+| FEA-Bench (brief) | `fea_brief.py` | functions and classes the code patch adds, from an AST comparison of old and new files; no test filtering (after FEA-Bench's `get_dataset.py`) |
+| SWE-bench Pro | `swe_pro.py` | requirements and an interface written by an LLM from the reference patch, approximating SWE-bench Pro's human annotators |
 
-### 1. DefUse2 — `defuse2.py`
-Extracts module-level WRITE entities from the implementation patch and READ entities
-from the test patch, then computes:
-- **Forward hints** = impl[WRITE] ∩ test[READ] 
-- **Backward hints** = impl[READ] ∩ test[WRITE]
+Each script has a Java version (`*_java.py`, shared rules in `java_lang.py`).
 
-New `.py` files are added to forward hints unconditionally. Entities already
-mentioned in the problem statement / doc_changes are filtered out.
+## 1. Get the data and the repositories
 
-### 2. NoCode — `nocode.py`
-Based on `augment.py` (NoCode-bench original pipeline).
+The input format and the four benchmarks' files are in
+[src/README.md](../src/README.md#1-prepare-the-data); the clones in
+[repos/README.md](../repos/README.md). Like the pipeline, every script here checks out
+commits in `$REPOS`: run one at a time per `$REPOS`.
 
-Extracts all identifiers (functions, classes, fields, error messages) from Python
-files touched by the implementation patch, computes the new-entity diff, then
-filters to those whose name also appears in the new entities of the test patch.
-No READ/WRITE distinction; purely name-based intersection.
+## 2. Run a policy
 
-### 3. FEA-Brief — `fea_brief.py`
-Based on `get_dataset.py` (FEA-Bench) / `add_new_components.py`.
+```bash
+python identity_selection/defuse2.py  --input $INPUT --repos-dir $REPOS --output $OUT/${BENCH}_defuse2.jsonl  --skip-errors
+python identity_selection/nocode.py   --input $INPUT --repos     $REPOS --output $OUT/${BENCH}_nocode.jsonl   --skip-errors
+python identity_selection/fea_brief.py --input $INPUT --repos    $REPOS --output $OUT/${BENCH}_fea_brief.jsonl --skip-errors
 
-AST-compares old vs new Python files in the implementation patch to find newly
-added function/class namespaces. Non-Python files are ignored ("brief" variant).
-No test-patch filtering.
+export REQUIREMENTS_MODEL=openai/aws/claude-haiku-4-5    # any litellm model string
+export REQUIREMENTS_API_BASE=https://...
+export REQUIREMENTS_API_KEY=...
+python identity_selection/swe_pro.py --task both --input $INPUT --repos $REPOS \
+    --output $OUT/${BENCH}_swe_pro.jsonl --skip-errors
+```
 
-Always computes the AST diff on-the-fly from the repo — `--repos` is required
-for all four datasets.
+Each output row is the input row plus the selection (`augmentations` for `defuse2.py` and
+`nocode.py`, `new_components` for `fea_brief.py`, `requirements_generated` and `interface_generated` for
+`swe_pro.py`). The per-benchmark commands of the paper, with its file names, are in
+`README_commands_defuse.md`, `README_commands_nocode.md`, `README_commands_fea_brief.md` and
+`README_commands_swe_pro.md`.
 
-### 4. Swe Bench Pro - `swe_pro.py`.
-Interface and requirements generation are both handled in this script. Requires LLM for such generation. Currently claude haiku 4.5. Set it at Line 85, Line 86 and Line 103, for model, api base and api key.
+**`defuse2.py` and the `src/` pipeline.** Both implement DefUse; the `src/` pipeline is its
+`communication` operator ([src/README.md](../src/README.md#4-select-with-defuse-step-2)).
 
+| | `src/` pipeline | `defuse2.py` |
+|---|---|---|
+| output per identifier | name, type, path, signature, location, docstring, ... | name and type |
+| error messages the tests assert on | not selected | selected (on SWE-bench Pro, 7 extra names on 6 of 266 instances) |
+| otherwise | the same selection | the same selection |
 
+`validate_defuse2.py` compares the two on a benchmark:
+`python identity_selection/validate_defuse2.py --src $OUT/hints_defuse.jsonl --defuse2 $OUT/${BENCH}_defuse2.jsonl`.
 
-## Steps:
+## 3. Turn a selection into mini-SWE-agent instances
 
-### 1. download data inside identity_selection/data_selection/huggingface
-`download.py` is present. Run that script inside `identity_selection/data_selection/huggingface`
+A selection is a list of names per instance. Flatten it, take each name's attributes from
+step 1's catalogue (`$OUT/extracted_hints.jsonl`, see
+[src/README.md](../src/README.md#3-extract-the-identifiers-step-1)), and project it; the
+result has the same shape as the pipeline's DefUse hints, so the same generators apply:
 
-### 2. For each hint selection pipeline, check corresponding README
-Defuse relaxed: `README_commands_defuse_relaxed.md`
-FEA Brief: `README_commands_fea_brief.md`
-NoCode: `README_commands_nocode.md`
-SWE Bench Pro: `README_commands_swe_pro.md`
+```bash
+SEL=defuse2                               # $OUT/${BENCH}_${SEL}.jsonl: the output of step 2
+P=declaration                             # any projection, see identity_projection/README.md
+python identity_selection/project_nocode.py \
+    -i $OUT/${BENCH}_${SEL}.jsonl -o $OUT/${BENCH}_${SEL}_names.jsonl
+python identity_selection/build_selection_enriched.py --selection $OUT/${BENCH}_${SEL}_names.jsonl \
+    --catalogue $OUT/extracted_hints.jsonl --output $OUT/${BENCH}_${SEL}_identifiers.jsonl
+python identity_projection/project_enriched.py \
+    -i $OUT/${BENCH}_${SEL}_identifiers.jsonl -o $OUT/${BENCH}_${SEL}_${P}_proj.jsonl -p $P
+python identity_projection/generate_instances.py -H $OUT/${BENCH}_${SEL}_${P}_proj.jsonl -s $INPUT \
+    -b swerebench -p $P -o results/miniswe_${BENCH}/${BENCH}_${SEL}_${P}.jsonl
+```
 
-### 3. Project the generate hints.
+- `-b swerebench` is for inputs that carry `image_name`; see
+  [identity_projection/README.md](../identity_projection/README.md#3-generate-mini-swe-agent-instances)
+  for SWE-bench Pro, FEA-Bench and Doc2Feat-bench.
+- `swe_pro.py` writes requirements text rather than names; flatten it with
+  `project_swe_pro_nocode_llm.py` (an LLM call, same `REQUIREMENTS_*` variables) instead of
+  `project_nocode.py`.
+- Names the catalogue does not know keep only their name and type. For the `fea_brief` and
+  `swe_pro` projections, first write the LLM descriptions on the identifiers file
+  ([src/README.md](../src/README.md#5-write-the-llm-descriptions-step-3)).
+- `nocode.py` and `nocode_java.py` list their names in an arbitrary order that changes from
+  run to run (they iterate a Python set), so two runs give the same names in a different
+  order.
 
-Check `README_commands_swe_pro.md`. Create folders if needed.
+## 4. Run the agent
 
-### 4. Run with mini swe agent.
+See [mini-swe-agent/README.md](../mini-swe-agent/README.md).
 
-### 5. Evaluate
-Check with each benchmark's own evaluation pipeline presented on GitHub.
+## Java
+
+The `*_java.py` scripts take the same arguments on Multi-SWE-bench Java
+(`data/java/multi_swe_bench_java.jsonl`, `repos/multi_swe_java_repos`; see
+[src/README.md](../src/README.md#java-multi-swe-bench)). Their outputs go straight to
+`helper_code/data_prepare/generate_msb_instances.py`:
+
+```bash
+python identity_selection/nocode_java.py -i data/java/multi_swe_bench_java.jsonl \
+    -r repos/multi_swe_java_repos -o results/java_msb_proj/nocode_java.jsonl --skip-errors
+python helper_code/data_prepare/generate_msb_instances.py \
+    --hints results/java_msb_proj/nocode_java.jsonl --source data/java/multi_swe_bench_java.jsonl \
+    --projection declaration --catalogue results/java_msb_proj/extracted_hints.jsonl \
+    --output results/miniswe_java/msb_nocode_java_declaration.jsonl
+```
+
+`--projection` is `name_only` or `declaration`; `--no-hints` writes the no-hint baseline.

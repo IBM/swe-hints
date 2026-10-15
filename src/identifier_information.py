@@ -469,7 +469,7 @@ def _cli() -> None:
         "--drop-uncatalogued",
         action="store_true",
         help="Drop identifiers with no catalogue entry (i.e. no module-level AST data).\n"
-             "Recommended with the relaxed identifier_usage_relaxed.py variant to prevent\n"
+             "Recommended with step 1 (identifier_usage.py, which collects names at any depth) to prevent\n"
              "local variables from creating noise in the taxonomy tree.",
     )
     parser.add_argument(
@@ -554,7 +554,7 @@ def _cli() -> None:
                 catalogue = usage.catalogue
 
                 # Drop names with no catalogue entry (no module-level AST data).
-                # Useful with the relaxed extraction variant to prevent local
+                # Useful because step 1 collects names at any depth: prevents local
                 # variables from adding structural noise to the taxonomy tree.
                 if args.drop_uncatalogued:
                     names = [n for n in names if n in catalogue]

@@ -1,9 +1,9 @@
 # SWE-Pro Annotation Pipeline — Commands
 
-All commands are run from the **hints repo root** (`hints_publish`).
+All commands are run from the **repository root**.
 
 ```bash
-cd /path/to/hints_publish && source .venv/bin/activate
+cd /path/to/swe-hints && source .venv/bin/activate
 ```
 
 Output goes to `identity_selection/results_selection/swe_pro_sel/raw/`.
@@ -96,7 +96,7 @@ cd repos/swerebench_repos/sqlglot && git fetch origin \
   74b4e7c311e9d4ff39ce2e4d91940eced96aa32f \
   2607a3ad44f039a076626abafb5340e70aa2e18b \
   bb4eda1beb68b92de9ab014a63c67797a07df2fa
-cd /path/to/hints_publish
+cd /path/to/swe-hints
 ```
 
 **`chaoss/augur`** — 1 commit permanently deleted from GitHub (HTTP 404). Cannot be recovered.

@@ -1,9 +1,9 @@
 # FEA-Brief Identity Selection — Commands
 
-All commands are run from the **hints repo root** (`hints_publish`).
+All commands are run from the **repository root**.
 
 ```bash
-cd /path/to/hints_publish && source .venv/bin/activate
+cd /path/to/swe-hints && source .venv/bin/activate
 ```
 
 ---
@@ -49,7 +49,7 @@ cd repos/feabench_repos/sqlglot && git fetch origin \
   6992c1855f343a5d0120a3b4c993d8c406dd29ba \
   6e4c0ef48ab0db1a336d634273dab35de17c80bc \
   f5f3f84c7343151c5f48da60e8c15df41aadb33a
-cd /path/to/hints_publish
+cd /path/to/swe-hints
 ```
 
 ### Generate hints
@@ -113,7 +113,7 @@ cd repos/swerebench_repos/sqlglot && git fetch origin \
   74b4e7c311e9d4ff39ce2e4d91940eced96aa32f \
   2607a3ad44f039a076626abafb5340e70aa2e18b \
   bb4eda1beb68b92de9ab014a63c67797a07df2fa
-cd /path/to/hints_publish
+cd /path/to/swe-hints
 ```
 
 **`chaoss/augur`** — 1 commit permanently deleted from GitHub (HTTP 404). Cannot be recovered.

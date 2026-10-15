@@ -1,0 +1,54 @@
+# Run the benchmark in Daytona sandboxes instead of local Docker.
+#
+# Append it AFTER the benchmark config so its environment keys win the merge:
+#
+#   mini-extra swebench \
+#     -c swebench_pro_hints.yaml \
+#     -c rits_swebench_ds.yaml \
+#     -c daytona.yaml \
+#     --subset mini_swe_instances.jsonl --workers 8 --output ./output/RUN
+#
+# Requires:  pip install daytona-sdk   and   export DAYTONA_API_KEY=...
+#
+# Everything not listed here - cwd, timeout, env - is inherited from the benchmark config,
+# which is why cwd is deliberately absent: swebench_pro uses /app, swerebench uses /testbed,
+# and doc2feat sets it per instance from the runner.
+
+environment:
+  environment_class: swerex_daytona
+
+  # The Docker configs set container_timeout: "4h", a string in Docker's own format. This
+  # backend takes seconds as a number, so the string must be overridden or pydantic rejects
+  # it. It is a hard cap on the runtime's life, not an idle timeout: swe-rex wraps the
+  # in-sandbox server in `timeout {container_timeout}s`, and when it fires the sandbox stays
+  # up with nothing listening, so every command turns into a 502 while the agent burns its
+  # remaining steps. 2h matches mini's own docker default.
+  container_timeout: 7200.0
+  # Startup deadline only - how long to wait for the swe-rex server to come up.
+  runtime_timeout: 900.0
+
+  # Daytona takes fixed resources, unlike Modal's cpu=(1,4)/memory=(5,30) ranges, so these
+  # are a ceiling rather than a burst limit. 8 GiB is what the SWE-bench Pro runs were proven
+  # on (qutebrowser, offscreen Qt + QtWebEngine, is the heavy case); do not go below 5, the
+  # floor the official harness requests. Disk is capped at 10 GiB per sandbox by Daytona -
+  # asking for more fails the create call outright.
+  #
+  # WATCH THE ACCOUNT CAP: a Daytona org is limited on *total* concurrent memory (200 GiB on
+  # the default tier). At 8 GiB that is 25 sandboxes across everything you are running, so
+  # --workers 20 leaves headroom and --workers 26 fails with
+  # "Total memory limit exceeded. Maximum allowed: 200GiB".
+  cpu: 2
+  memory: 8
+  disk: 10
+
+  target: us
+
+  # Backstop only - the environment deletes its sandbox explicitly on teardown. These cover a
+  # hard crash that never reaches it, so a sandbox cannot bill indefinitely.
+  auto_stop_interval: 30
+  auto_delete_interval: 60
+
+  # Bake swe-rex into the image before starting instead of installing it per sandbox. Slower
+  # the first time each image is seen, and unnecessary now that the in-sandbox bootstrap is
+  # reliable; left off.
+  prebuild_image: false
