@@ -4,7 +4,7 @@
 #
 #   mini-extra swebench \
 #     -c swebench_pro_hints.yaml \
-#     -c rits_swebench_ds.yaml \
+#     -c example_swebench_ds.yaml \
 #     -c daytona.yaml \
 #     --subset mini_swe_instances.jsonl --workers 8 --output ./output/RUN
 #

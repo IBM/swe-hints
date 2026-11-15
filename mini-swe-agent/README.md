@@ -18,7 +18,7 @@ cp $HINTS/mini-swe-agent/config/*.yaml               src/minisweagent/config/ben
 cp $HINTS/mini-swe-agent/run/benchmarks/*.py         src/minisweagent/run/benchmarks/
 cp $HINTS/mini-swe-agent/run/utilities/mini_extra.py src/minisweagent/run/utilities/
 cp -r $HINTS/mini-swe-agent/model_registry_cost .
-cp $HINTS/mini-swe-agent/rits_swebench_*.yaml .      # model config examples
+cp $HINTS/mini-swe-agent/example_swebench_*.yaml .   # model config examples
 
 # Optional: Daytona sandboxes instead of local Docker (section 4)
 cp $HINTS/mini-swe-agent/environments/__init__.py              src/minisweagent/environments/
@@ -84,7 +84,7 @@ per-instance images: build them with FEA-Bench's own harness, under the names
 ## 3. Write a model config
 
 The run merges the benchmark config with a model config; later `-c` files win. Write your
-own model config, or start from the `rits_swebench_*.yaml` examples, which use
+own model config, or start from the `example_swebench_*.yaml` examples, which use
 `litellm_textbased` with an `api_base` and `api_key`. An OpenRouter example:
 
 ```yaml
